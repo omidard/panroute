@@ -125,7 +125,7 @@ def run_query(start, end, feedstock=None, expand_depth=3, max_len=5, max_routes=
         # does this genome encode a thermodynamically-feasible route?
         tfeas = any(feas.get(i, {}).get("feasible", True) for i in row["route_idx"])
         yield "organism", {"species": row["species"], "domain": row["domain"], "gram": row["gram"],
-                           "n_routes": row["n_routes"], "route_idx": row["route_idx"][:12],
+                           "n_routes": row["n_routes"], "route_idx": row["route_idx"],
                            "feedstock": feed, "thermo_feasible": tfeas}
 
     g = gate_species["T2"]

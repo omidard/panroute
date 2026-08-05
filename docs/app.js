@@ -82,37 +82,82 @@ function addOrganism(o) {
   $("#orglist").appendChild(li);
 }
 
-/* ---- results ---- */
+/* ---- results: hero card(s) + species×routes catalog + funnel bar (mirrors bioconversion_overview) ---- */
+let COLS = [], COLIDX = {};
 function renderResults() {
   const d = ST.done;
-  $("#rtitle").innerHTML = `${ST.ep.end.name} <span style="color:var(--dim)">from</span> ${ST.ep.start.name}
-    &nbsp;·&nbsp; native capacity across KEGG genomes`;
-  const tiers = [["terminal enzyme (last step)", d.T0, "#7d8ca6"], ["encodes a full route", d.T2, "#2f7bff"]];
-  if (d.T3 != null) tiers.push(["+ feedstock uptake", d.T3, "#22d18c"]);
-  const max = Math.max(...tiers.map(t => t[1]), 1);
-  $("#funnel").innerHTML = tiers.map(([lab, v, c], i) =>
-    `<div class="tierbar" data-tier="${i}"><div class="lab">${lab}</div>
-      <div class="track"><div class="fillb" style="width:${Math.max(6, 100 * v / max)}%;
-        background:linear-gradient(90deg,${c},${c}cc)">${v.toLocaleString()}</div></div></div>`).join("");
+  $("#rtitle").innerHTML = `<i>${ST.ep.end.name}</i> <span style="color:var(--dim)">from</span> ${ST.ep.start.name}`;
   const g = d.gram, tot = (g.Gpos + g.Gneg + g.Arch + g.Other) || 1;
-  let acc = 0; const segs = ["Gpos", "Gneg", "Arch", "Other"].filter(k => g[k]).map(k => { const f = g[k] / tot, a0 = acc; acc += f; return { k, f, a0 }; });
-  const R = 62, C = 2 * Math.PI * R;
-  $("#donut").innerHTML = `<div class="donutwrap"><svg width="150" height="150" viewBox="0 0 150 150">
-    ${segs.map(s => `<circle cx="75" cy="75" r="${R}" fill="none" stroke="${GCOL[s.k]}" stroke-width="20"
-      stroke-dasharray="${s.f * C} ${C}" stroke-dashoffset="${-s.a0 * C}" transform="rotate(-90 75 75)"/>`).join("")}
-    <text x="75" y="80" text-anchor="middle" fill="#dce6f5" font-size="22" font-weight="700">${d.T2}</text></svg>
-    <div>${segs.map(s => `<div style="margin:4px 0"><span class="gdot" style="background:${GCOL[s.k]};display:inline-block;margin-right:6px"></span>${GNAME[s.k]} · <b>${g[s.k]}</b></div>`).join("")}</div></div>`;
-  renderSpecies(""); $("#spFilter").oninput = e => renderSpecies(e.target.value.toLowerCase());
+  const gramBar = ["Gpos", "Gneg", "Arch", "Other"].filter(k => g[k]).map(k =>
+    `<span class="gseg" title="${GNAME[k]} ${g[k]}" style="flex:${g[k]};background:${GCOL[k]}"></span>`).join("");
+  const gramLeg = ["Gpos", "Gneg", "Arch", "Other"].filter(k => g[k]).map(k =>
+    `<span><span class="gdot" style="background:${GCOL[k]};display:inline-block;margin-right:5px"></span>${GNAME[k]} <b>${g[k]}</b></span>`).join("");
+  const shortest = ST.routes.reduce((a, b) => b.length < a.length ? b : a, ST.routes[0]);
+  const enzymes = shortest ? [...new Set(shortest.steps.map(s => s.enzymes).filter(Boolean))].join(" → ") : "";
+  const nFeas = Object.values(ST.feas).filter(x => x.feasible).length;
+
+  // HERO ROW: big product card + stat cards
+  $("#herorow").innerHTML = `
+    <div class="hero glass">
+      <div class="ribbon">${d.T2 > 0 ? "NATIVE ROUTE" : "ENGINEERED ONLY"}</div>
+      <div class="hero-head">${ST.ep.end.name}<span>from ${ST.ep.start.name}</span></div>
+      <div class="hero-num">${d.T2.toLocaleString()}<span>prokaryote species encode a full native route</span></div>
+      <div class="hero-gram"><div class="gbar">${gramBar}</div><div class="gleg">${gramLeg}</div></div>
+      <div class="hero-route">committed route&nbsp; <b>${enzymes || "—"}</b></div>
+    </div>
+    ${statCard(ST.routes.length, "native routes", `shortest ${d.shortest} steps`, "#2f7bff")}
+    ${statCard(nFeas, "thermo-feasible routes", "eQuilibrator ΔG", "#22d18c")}
+    ${d.T3 != null ? statCard(d.T3, "can take up the feedstock", `${d.overflow_excluded} overflow-only excluded`, "#39c0ff") : ""}`;
+
+  // CATALOG columns = routes sorted by length
+  COLS = [...ST.routes].sort((a, b) => a.length - b.length); COLIDX = {};
+  COLS.forEach((r, i) => COLIDX[r.id] = i);
+  renderCatalog("");
+  $("#spFilter").oninput = e => renderCatalog(e.target.value.toLowerCase());
+
+  // FUNNEL BAR (clickable tiers)
+  const tiers = [["terminal enzyme", d.T0, "#7d8ca6", "has only the LAST enzyme — overcounts"],
+                 ["encodes full route", d.T2, "#2f7bff", "complete native route (honest headline)"]];
+  if (d.T3 != null) tiers.push(["+ feedstock uptake", d.T3, "#22d18c", "can also take up the feedstock"]);
+  const mx = Math.max(...tiers.map(t => t[1]), 1);
+  $("#funnelbar").innerHTML = `<div class="fbtitle">having the last enzyme ≠ having the pathway</div>` +
+    tiers.map(([lab, v, c], i) => `<div class="fseg" data-tier="${i}" style="--c:${c}">
+      <div class="fbar" style="width:${Math.max(30, 190 * v / mx)}px"></div>
+      <div class="fnum">${v.toLocaleString()}</div><div class="flab">${lab}</div></div>`).join(
+      `<div class="fsep">▸</div>`);
+  [...document.querySelectorAll(".fseg")].forEach(el => el.onclick = () => openTier(+el.dataset.tier, tiers[+el.dataset.tier]));
   $("#results").classList.remove("hidden");
-  document.querySelectorAll(".tierbar").forEach(t => t.onclick = () => openTier(+t.dataset.tier, tiers[+t.dataset.tier]));
 }
-function renderSpecies(filter) {
-  const rows = ST.orgs.filter(o => o.species.toLowerCase().includes(filter)).sort((a, b) => b.n_routes - a.n_routes);
-  $("#sptable").innerHTML = rows.slice(0, 300).map(o =>
-    `<li data-i="${ST.orgs.indexOf(o)}"><span class="gdot" style="background:${GCOL[o.gram] || GCOL.Other}"></span>
-      <span class="sp">${o.species}</span><span class="badge routes">${o.n_routes} routes</span>
-      ${o.thermo_feasible ? '<span class="badge feas">ΔG ✓</span>' : '<span class="badge infeas">ΔG ✕</span>'}</li>`).join("");
-  [...$("#sptable").children].forEach(li => li.onclick = () => openOrganism(ST.orgs[+li.dataset.i]));
+function statCard(n, label, sub, c) {
+  return `<div class="statcard glass" style="--c:${c}"><div class="sc-num">${(+n).toLocaleString()}</div>
+    <div class="sc-lab">${label}</div><div class="sc-sub">${sub}</div></div>`;
+}
+function renderCatalog(filter) {
+  const rows = ST.orgs.filter(o => o.species.toLowerCase().includes(filter))
+    .sort((a, b) => b.n_routes - a.n_routes).slice(0, 400);
+  const header = `<div class="cat-row cat-hd">
+    <span class="c-sp">species (${rows.length})</span>
+    <span class="c-badges">Gram · ΔG · feed</span>
+    <span class="c-strip">routes by length →</span></div>`;
+  $("#catalog").innerHTML = header + rows.map(o => {
+    const set = new Set(o.route_idx || []);
+    const strip = COLS.map(r => {
+      const has = set.has(r.id);
+      const f = ST.feas[r.id];
+      const col = !has ? "transparent" : (f ? (f.feasible ? "var(--green)" : "var(--red)") : "var(--blue)");
+      return `<span class="cell${has ? " on" : ""}" title="route ${r.length} steps${has ? "" : " — not encoded"}"
+        style="background:${col}"></span>`;
+    }).join("");
+    return `<div class="cat-row" data-i="${ST.orgs.indexOf(o)}">
+      <span class="c-sp"><span class="gdot" style="background:${GCOL[o.gram] || GCOL.Other}"></span><i>${o.species}</i></span>
+      <span class="c-badges"><span class="badge routes">${o.n_routes}×</span>
+        ${o.thermo_feasible ? '<span class="badge feas">✓</span>' : '<span class="badge infeas">✕</span>'}
+        ${o.feedstock === "overflow_capable" ? '<span class="badge infeas" title="overflow only">ov</span>' :
+          o.feedstock === "uptake" ? '<span class="badge feas" title="feedstock uptake">up</span>' : ''}</span>
+      <span class="c-strip">${strip}</span></div>`;
+  }).join("");
+  [...$("#catalog").querySelectorAll(".cat-row:not(.cat-hd)")].forEach(r =>
+    r.onclick = () => openOrganism(ST.orgs[+r.dataset.i]));
 }
 
 /* ---- drawer ---- */

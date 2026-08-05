@@ -56,19 +56,15 @@
 
   <section id="results" class="hidden">
     <div class="rhead"><h2 id="rtitle"></h2><button id="closeResults">×</button></div>
-    <div class="rgrid">
-      <div class="rcard glass" id="funnelCard">
-        <h3>Genome funnel <span class="hint">click a tier</span></h3>
-        <div id="funnel"></div>
-        <p class="caveat">Genome <i>potential</i>, not proof of production — a gene hit means the enzyme is encoded, not expressed or carrying flux. KEGG genomes are culture-biased.</p>
-      </div>
-      <div class="rcard glass" id="compCard"><h3>Composition</h3><div id="donut"></div></div>
-      <div class="rcard glass" id="spCard">
-        <h3>Route-carrying species <span class="hint">click for pathways</span></h3>
+    <div id="herorow"></div>
+    <div class="catalog glass">
+      <div class="catalog-head">
+        <h3 id="catTitle">Complete catalog — species × routes <span class="hint">click a species to open its pathways</span></h3>
         <input id="spFilter" placeholder="filter species…"/>
-        <ul id="sptable"></ul>
       </div>
+      <div id="catalog"></div>
     </div>
+    <div id="funnelbar"></div>
   </section>
 
   <aside id="drawer" class="hidden glass">
