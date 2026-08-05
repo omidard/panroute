@@ -42,11 +42,18 @@ wireAC("#endInput", "#endAc", "#endCid"); wireAC("#startInput", "#startAc", "#st
 function resolveInput(id) { const inp = $(id); if (inp.dataset.cid) return inp.dataset.cid;
   const r = searchCpd(inp.value); if (r[0]) { inp.dataset.cid = r[0].cid; inp.value = r[0].name; return r[0].cid; } return ""; }
 
-/* ---- example quick-picks ---- */
-const EXAMPLES = [["succinate", "pyruvate", ""], ["L-lactate", "pyruvate", ""], ["acetoin", "pyruvate", ""], ["2,3-butanediol", "pyruvate", "acetate"]];
-$("#examples").innerHTML = "<span class='exlab'>try:</span>" + EXAMPLES.map((e, i) => `<button class="ex" data-i="${i}">${e[0]} ← ${e[1]}</button>`).join("");
-[...$("#examples").querySelectorAll(".ex")].forEach(b => b.onclick = () => { const [p, s, f] = EXAMPLES[+b.dataset.i];
-  ["#endInput", "#startInput", "#feedInput"].forEach((id, k) => { $(id).value = [p, s, f][k]; $(id).dataset.cid = ""; });
+/* ---- example quick-picks (pinned to exact KEGG compound ids) ---- */
+const EXAMPLES = [
+  { p: ["succinate", "C00042"], s: ["pyruvate", "C00022"], f: ["", ""] },
+  { p: ["L-lactate", "C00186"], s: ["pyruvate", "C00022"], f: ["", ""] },
+  { p: ["acetoin", "C00466"], s: ["pyruvate", "C00022"], f: ["", ""] },
+  { p: ["2,3-butanediol", "C03044"], s: ["pyruvate", "C00022"], f: ["acetate", "C00033"] },
+];
+$("#examples").innerHTML = "<span class='exlab'>try:</span>" + EXAMPLES.map((e, i) =>
+  `<button class="ex" data-i="${i}">${e.p[0]} ← ${e.s[0]}</button>`).join("");
+[...$("#examples").querySelectorAll(".ex")].forEach(b => b.onclick = () => { const e = EXAMPLES[+b.dataset.i];
+  [["#endInput", "#endCid", e.p], ["#startInput", "#startCid", e.s], ["#feedInput", "#feedCid", e.f]].forEach(([iid, cid, v]) => {
+    $(iid).value = v[0]; $(iid).dataset.cid = v[1]; $(cid).textContent = v[1]; });
   $("#query").dispatchEvent(new Event("submit")); });
 
 $("#query").addEventListener("submit", e => { e.preventDefault();
