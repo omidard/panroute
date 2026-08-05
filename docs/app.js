@@ -50,11 +50,11 @@ async function replay(slug) {
     if (event === "phase") { $("#phase").textContent = "▸ " + data.msg; $("#pbar").style.width = (data.pct || 0) + "%"; await sleep(120); }
     else if (event === "endpoints") { ST.ep = data; map.setEndpoints(data.start, data.end);
       $("#mapstatus").textContent = `tracing  ${data.end.name}  →  ${data.start.name}`; await sleep(300); }
-    else if (event === "explore") { $("#mapstatus").textContent = `tracing route on KEGG map · step ${data.index + 1}/${data.total}`;
-      await map.drawStep(data.step); await sleep(160); }
+    else if (event === "explore") { /* the map trace runs on the 'routes' event via traceRoutes */ }
     else if (event === "routes") { ST.routes = data.routes; data.routes.forEach(r => ST.byId[r.id] = r);
       $("#routeCount").textContent = data.n_routes;
-      const sh = data.routes.reduce((a, b) => b.length < a.length ? b : a, data.routes[0]); map.finalizeRoute(sh.map); }
+      $("#mapstatus").textContent = `connecting  ${ST.ep.end.name} → ${ST.ep.start.name}  via ${data.n_routes} real pathways`;
+      await map.traceRoutes(data.routes, ST.ep.end.name, !!(ST.ep.end && ST.ep.end.xy)); }
     else if (event === "thermo") { ST.feas[data.route_id] = data;
       $("#feasCount").textContent = Object.values(ST.feas).filter(x => x.feasible).length; }
     else if (event === "organism") { addOrganism(data);
@@ -112,8 +112,10 @@ function renderResults() {
   // CATALOG columns = routes sorted by length
   COLS = [...ST.routes].sort((a, b) => a.length - b.length); COLIDX = {};
   COLS.forEach((r, i) => COLIDX[r.id] = i);
+  renderPathways(ST.routes);
   renderCatalog("");
   $("#spFilter").oninput = e => renderCatalog(e.target.value.toLowerCase());
+  $("#scrollcue").classList.remove("hidden");
 
   // FUNNEL BAR (clickable tiers)
   const tiers = [["terminal enzyme", d.T0, "#7d8ca6", "has only the LAST enzyme — overcounts"],
@@ -158,6 +160,28 @@ function renderCatalog(filter) {
   }).join("");
   [...$("#catalog").querySelectorAll(".cat-row:not(.cat-hd)")].forEach(r =>
     r.onclick = () => openOrganism(ST.orgs[+r.dataset.i]));
+}
+
+/* ---- distinct pathways (clickable, highlight on map) ---- */
+function renderPathways(routes) {
+  const list = [...routes].sort((a, b) => a.length - b.length);
+  $("#pwTitle").innerHTML = `Distinct pathways · <b>${routes.length}</b> found
+    <span class="hint">click one to highlight it on the map above</span>`;
+  $("#pwList").innerHTML = list.map(r => {
+    const f = ST.feas[r.id];
+    const feas = f ? (f.feasible ? `<span class="badge feas">ΔG feasible ${f.dG_sum ?? ""}</span>`
+                                 : `<span class="badge infeas">ΔG infeasible</span>`) : "";
+    const chain = r.path.map((p, i) => (i === 0 ? "" :
+      `<span class="ar">→</span><span class="enz">${r.steps[i - 1].enzymes || "?"}</span><span class="ar">→</span>`)
+      + `<span class="met">${p.name}</span>`).join(" ");
+    const rx = r.steps.map(s => s.reactions[0].rid).join(" · ");
+    return `<div class="pw" data-id="${r.id}"><div class="pw-top"><span>pathway ${r.id + 1} · ${r.length} steps</span>${feas}</div>
+      <div class="chain">${chain}</div><div class="rx">${rx}</div></div>`;
+  }).join("");
+  [...$("#pwList").children].forEach(el => el.onclick = () => {
+    map.highlightRoute(ST.byId[+el.dataset.id]);
+    $("#mapwrap").scrollIntoView({ behavior: "smooth", block: "center" });
+  });
 }
 
 /* ---- drawer ---- */

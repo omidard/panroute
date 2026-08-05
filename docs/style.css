@@ -189,3 +189,44 @@ html,body{margin:0;height:100%;background:radial-gradient(1200px 700px at 70% -1
 .fseg .fnum{font-size:19px;font-weight:800;color:var(--c);font-variant-numeric:tabular-nums;line-height:1}
 .fseg .flab{font-size:11px;color:var(--dim)}
 .fsep{color:var(--dim);font-size:16px}
+
+/* ================= v3: gray transparent map · blinking endpoints · results beneath map ============ */
+#app{height:auto;min-height:100vh;overflow-y:auto;overflow-x:hidden}
+#stage{height:74vh}
+/* gray transparent map (png is already gray+transparent) */
+#map image.bg{filter:none;opacity:.9}
+#mapwrap{background:transparent}
+/* endpoints: blinking glow */
+.epnode{stroke:#fff;stroke-width:3}
+.epnode.product{fill:var(--neon)} .epnode.feedstock{fill:var(--amber)}
+.epnode.offmap{fill:var(--neon)}
+.ephalo{fill:none;stroke-width:5;opacity:.5;animation:blink 1.3s ease-in-out infinite}
+.ephalo.product{stroke:var(--neon)} .ephalo.feedstock{stroke:var(--amber)} .ephalo.offmap{stroke:var(--neon)}
+@keyframes blink{0%,100%{r:26;opacity:.7}50%{r:52;opacity:.08}}
+/* real-pathway edges */
+.edge{fill:none;stroke:#2f7bff;stroke-width:9;stroke-linecap:round;stroke-linejoin:round;
+  filter:drop-shadow(0 0 7px rgba(57,140,255,.9))}
+.edge.connector{stroke-dasharray:3 12;stroke:#5a86c8;stroke-width:6}
+.edge.dashed{stroke-dasharray:16 12;stroke:#8899c0;stroke-width:5}
+.edge.hot{stroke:var(--neon);stroke-width:13;filter:drop-shadow(0 0 12px var(--neon))}
+.nodelabel{fill:#eaf3ff;font-size:30px;font-weight:700;paint-order:stroke;stroke:#05080e;stroke-width:6px}
+
+/* results now flow BENEATH the map — not a popup */
+#results{position:static !important;top:auto;left:auto;right:auto;bottom:auto;background:transparent;
+  backdrop-filter:none;z-index:auto;padding:6px 18px 30px;min-height:auto}
+#results .rhead #closeResults{display:none}
+.scrollcue{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);color:var(--dim);font-size:12px;
+  animation:bob 1.6s infinite;pointer-events:none}
+@keyframes bob{0%,100%{transform:translate(-50%,0)}50%{transform:translate(-50%,6px)}}
+
+/* distinct pathways — clickable list */
+#pathways{margin:14px 0}
+.pw-list{display:flex;flex-direction:column;gap:8px;max-height:340px;overflow:auto}
+.pw{background:#0b1422;border:1px solid var(--stroke);border-radius:10px;padding:10px 12px;cursor:pointer;transition:border .12s}
+.pw:hover{border-color:var(--cyan)}
+.pw .pw-top{display:flex;justify-content:space-between;font-size:11.5px;color:var(--dim);margin-bottom:6px}
+.pw .chain{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:12.5px}
+.pw .met{background:#0c1524;border:1px solid var(--stroke);border-radius:6px;padding:2px 7px}
+.pw .enz{color:var(--cyan);font-family:ui-monospace,monospace;font-size:11px}
+.pw .ar{color:var(--dim)}
+.pw .rx{font-family:ui-monospace,monospace;font-size:10.5px;color:var(--dim);margin-top:5px}
