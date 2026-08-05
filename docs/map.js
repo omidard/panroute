@@ -76,21 +76,30 @@ class MapView {
       requestAnimationFrame(a); });
   }
 
-  /* trace ALL routes' real map edges, spreading from the product toward the feedstock */
+  /* trace ALL routes' real map edges, spreading OUTWARD FROM THE PRODUCT like a search
+     frontier: edges are ordered by their distance (in steps) from the product, so the blue
+     highlight visibly grows from the product toward the feedstock — not scattered. */
   async traceRoutes(routes, endName, endOnMap) {
     const edges = []; let gateway = null;
-    for (const r of routes) for (const st of r.map.steps) {
+    for (const r of routes) r.map.steps.forEach((st, di) => {   // steps are retro order: product first
       if (st.kind === "polyline" || st.kind === "connector") {
-        edges.push({ coords: st.coords, cls: st.kind === "connector" ? " connector" : "" });
+        edges.push({ coords: st.coords, cls: st.kind === "connector" ? " connector" : "", dist: di });
         if (!gateway) gateway = st.from_xy || st.to_xy || st.coords[0];
       }
-    }
+    });
+    edges.sort((a, b) => a.dist - b.dist);            // frontier grows from the product outward
     if (!endOnMap && gateway) {                       // pin off-core-map product at the gateway
       const gx = gateway[0] - 150, gy = gateway[1] - 210;
       await this._drawEdge([[gateway[0], gateway[1]], [gx, gy]], " dashed");
       this.endpoint([gx, gy], endName, "product offmap");
     }
-    for (const e of edges) { await this._drawEdge(e.coords, e.cls); await sleepM(60); this.focus(true); }
+    let last = -1;
+    for (const e of edges) {
+      await this._drawEdge(e.coords, e.cls);
+      if (e.dist !== last) { this.focus(true); last = e.dist; await sleepM(140); }  // pause between frontier rings
+      else await sleepM(55);
+    }
+    this.focus(true);
   }
 
   highlightRoute(route) {
