@@ -1,0 +1,12 @@
+{
+  "runs": [
+    {
+      "slug": "butanediol-from-acetate",
+      "title": "2,3-Butanediol from acetate",
+      "start_name": "Pyruvate",
+      "end_name": "(R,R)-Butane-2,3-diol",
+      "T2": 502,
+      "n_routes": 16
+    }
+  ]
+}

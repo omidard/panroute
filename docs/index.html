@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PanRoute · retrosynthetic bioconversion routes across KEGG genomes</title>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand"><span class="logo">◈</span> PanRoute
+      <span class="tag">retrosynthetic route search · all KEGG genomes</span></div>
+    <div id="selectorbar">
+      <label>bioconversion</label>
+      <select id="runSelect"><option value="">— choose —</option></select>
+      <button id="runBtn">▶ trace it</button>
+      <div class="customhint" title="On-demand runs for any metabolite pair need the full KEGG data bundle (in progress).">
+        want a different pair? <span>on-demand runs — coming soon</span></div>
+    </div>
+  </header>
+
+  <main id="stage">
+    <aside id="left" class="glass">
+      <div class="lhead">
+        <div class="stat"><b id="orgCount">0</b><span>species found</span></div>
+        <div class="stat"><b id="routeCount">0</b><span>routes</span></div>
+        <div class="stat"><b id="feasCount">0</b><span>thermo-feasible</span></div>
+      </div>
+      <div class="phase" id="phase">pick a bioconversion to begin</div>
+      <div class="progress"><div id="pbar"></div></div>
+      <div class="orglist-head">Organisms discovered <span class="hint">live trace</span></div>
+      <ul id="orglist"></ul>
+    </aside>
+
+    <section id="mapwrap">
+      <svg id="map" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="maplegend" class="glass">
+        <div class="ml-title">KEGG global metabolism · map01100</div>
+        <div class="ml-row"><span class="dot product"></span> product</div>
+        <div class="ml-row"><span class="dot feedstock"></span> feedstock</div>
+        <div class="ml-row"><span class="line-samp"></span> route traced (product → feedstock)</div>
+        <div class="ml-row"><span class="dot offmap"></span> off-core-map step (peripheral)</div>
+      </div>
+      <div id="mapstatus" class="glass hidden"></div>
+      <div id="intro" class="glass">
+        <h1>Which microbes can make it — and how?</h1>
+        <p>Pick a bioconversion. PanRoute traces every native route from the product back to the
+          feedstock on the real KEGG global map, finds which of the ~10,500 KEGG prokaryotes encode
+          a complete route, and checks each route's thermodynamic feasibility.</p>
+        <p class="fine">Genome <i>potential</i>, not proof of production. KEGG-derived · academic/research use.</p>
+      </div>
+    </section>
+  </main>
+
+  <section id="results" class="hidden">
+    <div class="rhead"><h2 id="rtitle"></h2><button id="closeResults">×</button></div>
+    <div class="rgrid">
+      <div class="rcard glass" id="funnelCard">
+        <h3>Genome funnel <span class="hint">click a tier</span></h3>
+        <div id="funnel"></div>
+        <p class="caveat">Genome <i>potential</i>, not proof of production — a gene hit means the enzyme is encoded, not expressed or carrying flux. KEGG genomes are culture-biased.</p>
+      </div>
+      <div class="rcard glass" id="compCard"><h3>Composition</h3><div id="donut"></div></div>
+      <div class="rcard glass" id="spCard">
+        <h3>Route-carrying species <span class="hint">click for pathways</span></h3>
+        <input id="spFilter" placeholder="filter species…"/>
+        <ul id="sptable"></ul>
+      </div>
+    </div>
+  </section>
+
+  <aside id="drawer" class="hidden glass">
+    <div class="dhead"><h3 id="dtitle"></h3><button id="closeDrawer">×</button></div>
+    <div id="dbody"></div>
+  </aside>
+
+</div>
+<script src="map.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
