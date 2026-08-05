@@ -8,63 +8,97 @@ const map = new MapView($("#map"));
 let ST = null, RUNNING = false;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/* ---- load run index ---- */
-async function loadIndex() {
-  try {
-    const idx = await fetch("runs/index.json").then(r => r.json());
-    const sel = $("#runSelect");
-    idx.runs.forEach(r => {
-      const o = document.createElement("option");
-      o.value = r.slug;
-      o.textContent = `${r.end_name} ← ${r.start_name}  ·  ${(r.T2 || 0).toLocaleString()} species`;
-      sel.appendChild(o);
-    });
-    if (idx.runs[0]) sel.value = idx.runs[0].slug;
-  } catch (e) { $("#phase").textContent = "no runs published yet"; }
+const engine = new PanRoute();
+let GENOME_READY = false, CPD = [];
+fetch("data/ko/_ready.json").then(r => { if (r.ok) GENOME_READY = true; }).catch(() => {});
+fetch("data/compounds.json").then(r => r.json()).then(d => { CPD = Object.entries(d).map(([cid, name]) => ({ cid, name })); }).catch(() => {});
+
+/* ---- autocomplete over bundled compound names ---- */
+function searchCpd(q) {
+  q = q.trim().toLowerCase(); if (q.length < 2) return [];
+  if (/^c\d{5}$/.test(q)) { const m = CPD.find(x => x.cid.toLowerCase() === q); return m ? [m] : []; }
+  const starts = [], has = [];
+  for (const x of CPD) { const n = x.name.toLowerCase();
+    if (n.startsWith(q)) starts.push(x); else if (n.includes(q)) has.push(x);
+    if (starts.length >= 12) break; }
+  return starts.concat(has).slice(0, 12);
 }
-loadIndex();
+function wireAC(inputId, acId, cidId) {
+  const inp = $(inputId), ac = $(acId), cid = $(cidId); let items = [], sel = -1; inp.dataset.cid = "";
+  inp.addEventListener("input", () => { cid.textContent = ""; inp.dataset.cid = "";
+    items = searchCpd(inp.value); sel = -1;
+    ac.innerHTML = items.map((x, i) => `<li data-i="${i}">${x.name}<span class="c">${x.cid}</span></li>`).join("");
+    ac.classList.toggle("show", items.length > 0); });
+  ac.addEventListener("mousedown", e => { const li = e.target.closest("li"); if (!li) return;
+    const x = items[+li.dataset.i]; inp.value = x.name; inp.dataset.cid = x.cid; cid.textContent = x.cid; ac.classList.remove("show"); });
+  inp.addEventListener("keydown", e => { if (!ac.classList.contains("show")) return; const lis = [...ac.children];
+    if (e.key === "ArrowDown") { sel = Math.min(sel + 1, lis.length - 1); e.preventDefault(); }
+    else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); e.preventDefault(); }
+    else if (e.key === "Enter") { if (sel >= 0) { lis[sel].dispatchEvent(new Event("mousedown")); e.preventDefault(); } return; }
+    lis.forEach((l, i) => l.classList.toggle("sel", i === sel)); });
+  inp.addEventListener("blur", () => setTimeout(() => ac.classList.remove("show"), 160));
+}
+wireAC("#endInput", "#endAc", "#endCid"); wireAC("#startInput", "#startAc", "#startCid"); wireAC("#feedInput", "#feedAc", "#feedCid");
+function resolveInput(id) { const inp = $(id); if (inp.dataset.cid) return inp.dataset.cid;
+  const r = searchCpd(inp.value); if (r[0]) { inp.dataset.cid = r[0].cid; inp.value = r[0].name; return r[0].cid; } return ""; }
 
-$("#runBtn").addEventListener("click", () => {
-  const slug = $("#runSelect").value;
-  if (slug && !RUNNING) replay(slug);
-});
+/* ---- example quick-picks ---- */
+const EXAMPLES = [["succinate", "pyruvate", ""], ["L-lactate", "pyruvate", ""], ["acetoin", "pyruvate", ""], ["2,3-butanediol", "pyruvate", "acetate"]];
+$("#examples").innerHTML = "<span class='exlab'>try:</span>" + EXAMPLES.map((e, i) => `<button class="ex" data-i="${i}">${e[0]} ← ${e[1]}</button>`).join("");
+[...$("#examples").querySelectorAll(".ex")].forEach(b => b.onclick = () => { const [p, s, f] = EXAMPLES[+b.dataset.i];
+  ["#endInput", "#startInput", "#feedInput"].forEach((id, k) => { $(id).value = [p, s, f][k]; $(id).dataset.cid = ""; });
+  $("#query").dispatchEvent(new Event("submit")); });
 
-/* ---- replay a bundle ---- */
-async function replay(slug) {
+$("#query").addEventListener("submit", e => { e.preventDefault();
+  const end = resolveInput("#endInput"), start = resolveInput("#startInput"), feed = resolveInput("#feedInput");
+  if (!start || !end) { $("#phase").textContent = "pick a valid product and start metabolite"; return; }
+  if (!RUNNING) runLive(start, end, feed); });
+
+/* ---- run the live in-browser search ---- */
+async function runLive(start, end, feed) {
   RUNNING = true;
   ST = { routes: [], byId: {}, feas: {}, orgs: [], ep: null };
   map.reset(true);
-  $("#intro").classList.add("hidden");
-  $("#orglist").innerHTML = ""; $("#orgCount").textContent = "0";
-  $("#routeCount").textContent = "0"; $("#feasCount").textContent = "0";
+  $("#intro").classList.add("hidden"); $("#scrollcue").classList.add("hidden");
+  $("#orglist").innerHTML = ""; $("#orgCount").textContent = "0"; $("#routeCount").textContent = "0"; $("#feasCount").textContent = "0";
   $("#results").classList.add("hidden"); $("#drawer").classList.add("hidden");
-  $("#runBtn").disabled = true; $("#mapstatus").classList.remove("hidden");
-  $("#mapstatus").textContent = "loading…";
-
-  let bundle;
-  try { bundle = await fetch(`runs/${slug}.json`).then(r => r.json()); }
-  catch (e) { $("#phase").textContent = "failed to load run"; RUNNING = false; $("#runBtn").disabled = false; return; }
-
-  let orgShown = 0;
-  for (const { event, data } of bundle.events) {
-    if (event === "phase") { $("#phase").textContent = "▸ " + data.msg; $("#pbar").style.width = (data.pct || 0) + "%"; await sleep(120); }
-    else if (event === "endpoints") { ST.ep = data; map.setEndpoints(data.start, data.end);
-      $("#mapstatus").textContent = `tracing  ${data.end.name}  →  ${data.start.name}`; await sleep(300); }
-    else if (event === "explore") { /* the map trace runs on the 'routes' event via traceRoutes */ }
-    else if (event === "routes") { ST.routes = data.routes; data.routes.forEach(r => ST.byId[r.id] = r);
-      $("#routeCount").textContent = data.n_routes;
-      $("#mapstatus").textContent = `connecting  ${ST.ep.end.name} → ${ST.ep.start.name}  via ${data.n_routes} real pathways`;
-      await map.traceRoutes(data.routes, ST.ep.end.name, !!(ST.ep.end && ST.ep.end.xy)); }
-    else if (event === "thermo") { ST.feas[data.route_id] = data;
-      $("#feasCount").textContent = Object.values(ST.feas).filter(x => x.feasible).length; }
-    else if (event === "organism") { addOrganism(data);
-      orgShown++; if (orgShown < 80) await sleep(24); else if (orgShown % 8 === 0) await sleep(4); }
-    else if (event === "done") { ST.done = data;
-      $("#phase").textContent = "✓ complete"; $("#pbar").style.width = "100%";
-      $("#mapstatus").textContent = `${data.T2.toLocaleString()} species · ${data.n_routes} routes`;
-      renderResults(); }
-  }
+  $("#runBtn").disabled = true; $("#mapstatus").classList.remove("hidden"); $("#mapstatus").textContent = "searching…";
+  try {
+    await engine.run(start, end, feed || null, (t, d) => handleEvent(t, d), { skipGating: !GENOME_READY, maxLen: 7, maxRoutes: 80 });
+  } catch (err) { $("#phase").textContent = "✕ " + (err.message || err); console.error(err); }
   RUNNING = false; $("#runBtn").disabled = false;
+}
+
+function handleEvent(event, data) {
+  if (event === "phase") { $("#phase").textContent = "▸ " + data.msg; $("#pbar").style.width = (data.pct || 0) + "%"; }
+  else if (event === "endpoints") { ST.ep = data; map.setEndpoints(data.start, data.end);
+    $("#mapstatus").textContent = `tracing  ${data.end.name}  →  ${data.start.name}`; }
+  else if (event === "explore") { /* map trace runs on the 'routes' event */ }
+  else if (event === "routes") { ST.routes = data.routes; data.routes.forEach(r => ST.byId[r.id] = r);
+    $("#routeCount").textContent = data.n_routes;
+    $("#mapstatus").textContent = `connecting  ${ST.ep.end.name} → ${ST.ep.start.name}  via ${data.n_routes} real pathways`;
+    map.traceRoutes(data.routes, ST.ep.end.name, !!(ST.ep.end && ST.ep.end.xy)); }
+  else if (event === "thermo") { ST.feas[data.route_id] = data; $("#feasCount").textContent = Object.values(ST.feas).filter(x => x.feasible).length; }
+  else if (event === "organism") { addOrganism(data); }
+  else if (event === "done") { ST.done = data;
+    if (data.error) { $("#phase").textContent = "✕ " + data.error; $("#mapstatus").textContent = data.error; return; }
+    if (data.genome_pending) { $("#phase").textContent = "✓ routes found — organism results pending (genome data uploading)";
+      $("#pbar").style.width = "100%"; $("#mapstatus").textContent = `${data.n_routes} routes found`; renderPathwaysOnly(); return; }
+    $("#phase").textContent = "✓ complete"; $("#pbar").style.width = "100%";
+    $("#mapstatus").textContent = `${data.T2.toLocaleString()} species · ${data.n_routes} routes`; renderResults(); }
+}
+
+/* results with routes+pathways only (genome bundle not uploaded yet) */
+function renderPathwaysOnly() {
+  $("#rtitle").innerHTML = `<i>${ST.ep.end.name}</i> <span style="color:var(--dim)">from</span> ${ST.ep.start.name}`;
+  $("#herorow").innerHTML = `<div class="hero glass"><div class="ribbon" style="background:var(--amber)">${ST.routes.length} ROUTES</div>
+    <div class="hero-head">${ST.ep.end.name}<span>from ${ST.ep.start.name}</span></div>
+    <div class="hero-num">${ST.routes.length}<span>native routes found · shortest ${ST.done.shortest} steps</span></div>
+    <div class="hero-route" style="color:var(--amber)">Which organisms encode these routes is computed once the genome data finishes uploading — the routes and map are live now.</div></div>`;
+  COLS = [...ST.routes].sort((a, b) => a.length - b.length); COLIDX = {}; COLS.forEach((r, i) => COLIDX[r.id] = i);
+  renderPathways(ST.routes);
+  document.querySelector(".catalog").style.display = "none"; $("#funnelbar").style.display = "none";
+  $("#results").classList.remove("hidden"); $("#scrollcue").classList.remove("hidden");
 }
 
 /* ---- live organism panel ---- */
@@ -86,6 +120,7 @@ function addOrganism(o) {
 let COLS = [], COLIDX = {};
 function renderResults() {
   const d = ST.done;
+  document.querySelector(".catalog").style.display = ""; $("#funnelbar").style.display = "";
   $("#rtitle").innerHTML = `<i>${ST.ep.end.name}</i> <span style="color:var(--dim)">from</span> ${ST.ep.start.name}`;
   const g = d.gram, tot = (g.Gpos + g.Gneg + g.Arch + g.Other) || 1;
   const gramBar = ["Gpos", "Gneg", "Arch", "Other"].filter(k => g[k]).map(k =>

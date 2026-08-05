@@ -12,13 +12,17 @@
   <header id="topbar">
     <div class="brand"><span class="logo">◈</span> PanRoute
       <span class="tag">retrosynthetic route search · all KEGG genomes</span></div>
-    <div id="selectorbar">
-      <label>bioconversion</label>
-      <select id="runSelect"><option value="">— choose —</option></select>
-      <button id="runBtn">▶ trace it</button>
-      <div class="customhint" title="On-demand runs for any metabolite pair need the full KEGG data bundle (in progress).">
-        want a different pair? <span>on-demand runs — coming soon</span></div>
-    </div>
+    <form id="query" autocomplete="off">
+      <div class="field"><label>make (product)</label>
+        <input id="endInput" placeholder="e.g. succinate"/><ul class="ac" id="endAc"></ul><span class="cid" id="endCid"></span></div>
+      <div class="arrow">←</div>
+      <div class="field"><label>from (start metabolite)</label>
+        <input id="startInput" placeholder="e.g. glucose"/><ul class="ac" id="startAc"></ul><span class="cid" id="startCid"></span></div>
+      <div class="field small"><label>feedstock gate (optional)</label>
+        <input id="feedInput" placeholder="e.g. acetate"/><ul class="ac" id="feedAc"></ul><span class="cid" id="feedCid"></span></div>
+      <button id="runBtn" type="submit">▶ trace</button>
+    </form>
+    <div id="examples"></div>
   </header>
 
   <main id="stage">
@@ -79,6 +83,7 @@
 
 </div>
 <script src="map.js"></script>
+<script src="engine.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

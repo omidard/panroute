@@ -240,3 +240,10 @@ html,body{height:auto;overflow-x:hidden}
 #orglist{flex:1 1 auto;min-height:0;overflow-y:auto}
 #mapwrap{height:100%}
 #map image.bg{opacity:1}
+
+/* example quick-picks */
+#examples{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:0 20px 10px}
+#examples .exlab{color:var(--dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+#examples .ex{background:#0c1524;border:1px solid var(--stroke);color:var(--ink);border-radius:20px;
+  padding:5px 12px;font-size:12px;cursor:pointer;transition:border .12s}
+#examples .ex:hover{border-color:var(--cyan);color:#fff}

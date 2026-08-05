@@ -163,6 +163,11 @@
       const feas = {};
       routes.forEach(r => { feas[r.id] = this.routeFeasible(r); emit("thermo", { route_id: r.id, feasible: feas[r.id].feasible, length: r.length, dG_sum: feas[r.id].dG_sum }); });
 
+      if (opts.skipGating) {              // genome data not uploaded yet: routes+map+pathways only
+        emit("done", { n_routes: routes.length, shortest: shortest.length,
+          genome_pending: true, kegg_release: this.net.kegg_release });
+        return;
+      }
       emit("phase", { msg: "gating KEGG genomes on the routes", pct: 55 });
       const routeKos = new Set(); routes.forEach(r => r.steps.forEach(s => s.reactions.forEach(x => x.kos.forEach(k => routeKos.add(k)))));
       const fkos = feedstock ? this.feedKos(feedstock) : new Set();
