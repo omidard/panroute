@@ -1,0 +1,18 @@
+end_cid	end_name	species	label	note	source
+C00207	Acetone	Clostridium acetobutylicum	producer	classic ABE fermentation acetone producer	Jones & Woods 1986 Microbiol Rev 50:484
+C00207	Acetone	Clostridium beijerinckii	producer	solventogenic acetone producer	Jones & Woods 1986
+C00207	Acetone	Bacillus subtilis	non_producer	no native acetone route	model non-producer
+C00207	Acetone	Escherichia coli	non_producer	no native acetone secretion (needs engineered adc/ctf)	Bermejo 1998 AEM 64:1079
+C01013	3-Hydroxypropionate	Chloroflexus aurantiacus	producer	3-HP/malonyl-CoA cycle autotroph	Zarzycki 2009 PNAS 106:21317
+C01013	3-Hydroxypropionate	Metallosphaera sedula	producer	3-HP/4-HB cycle	Berg 2007 Science 318:1782
+C01013	3-Hydroxypropionate	Escherichia coli	non_producer	no native 3-HP route (engineered mcr)	model non-producer
+C00469	Ethanol	Zymomonas mobilis	producer	Entner-Doudoroff to ethanol	Rogers 1982
+C00469	Ethanol	Saccharomyces-adjacent bacteria	producer	fermentative ethanol	general
+C00469	Ethanol	Escherichia coli	producer	mixed-acid fermentation adhE ethanol	Clark 1989 FEMS Microbiol Rev
+C00469	Ethanol	Pseudomonas aeruginosa	non_producer	obligate aerobe, no fermentative ethanol	model non-producer
+C03044	(R,R)-2,3-butanediol	Klebsiella pneumoniae	producer	classic budABC 2,3-BD producer	Ji 2011 Biotechnol Adv 29:351
+C03044	(R,R)-2,3-butanediol	Bacillus subtilis	producer	alsSD + bdhA acetoin/2,3-BD	Renna 1993 J Bacteriol 175:3863
+C03044	(R,R)-2,3-butanediol	Enterobacter cloacae	producer	budABC 2,3-BD	Ji 2011
+C03044	(R,R)-2,3-butanediol	Serratia marcescens	producer	2,3-BD producer	Zhang 2010
+C03044	(R,R)-2,3-butanediol	Mycobacterium tuberculosis	non_producer	no acetoin/2,3-BD secretion pathway	model non-producer
+C03044	(R,R)-2,3-butanediol	Helicobacter pylori	non_producer	no 2,3-BD route	model non-producer

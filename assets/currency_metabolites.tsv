@@ -1,0 +1,40 @@
+kegg_id	name	class	note
+C00001	H2O	inorganic	solvent
+C00080	H+	inorganic	proton
+C00007	O2	inorganic	electron acceptor
+C00011	CO2	c1_sink	universal decarboxylation product; hub if kept — reachable only as explicit endpoint
+C00288	HCO3-	c1_sink	bicarbonate; carboxylation donor
+C00009	Orthophosphate	inorganic	Pi
+C00013	Diphosphate	inorganic	PPi
+C00002	ATP	nucleotide_cofactor	phosphoryl donor
+C00008	ADP	nucleotide_cofactor
+C00020	AMP	nucleotide_cofactor
+C00044	GTP	nucleotide_cofactor
+C00035	GDP	nucleotide_cofactor
+C00003	NAD+	redox_cofactor
+C00004	NADH	redox_cofactor
+C00005	NADPH	redox_cofactor
+C00006	NADP+	redox_cofactor
+C00016	FAD	redox_cofactor
+C01352	FADH2	redox_cofactor
+C00138	reduced ferredoxin	redox_cofactor
+C00139	oxidized ferredoxin	redox_cofactor
+C00010	CoA	carrier	acyl carrier — the acyl carbon skeleton pair is kept via RCLASS; free CoA side dropped
+C00024	Acetyl-CoA	carrier_keep	KEPT — real 2-carbon skeleton node (only free CoA C00010 is currency)
+C00019	S-adenosyl-L-methionine	carrier	methyl donor
+C00021	S-adenosyl-L-homocysteine	carrier
+C00014	NH3	inorganic	amino donor/acceptor
+C00025	L-Glutamate	amino_shuttle	transamination donor — currency ONLY for aminotransfer; kept otherwise via RCLASS pair
+C00026	2-Oxoglutarate	amino_shuttle	transamination acceptor
+C00068	Thiamin diphosphate	cofactor
+C00018	Pyridoxal phosphate	cofactor
+C00034	Manganese	inorganic
+C14818	Fe2+	inorganic
+C14819	Fe3+	inorganic
+C00030	Reduced acceptor	redox_cofactor	generic acceptor
+C00028	Acceptor	redox_cofactor	generic acceptor
+C00342	Reduced thioredoxin	redox_cofactor
+C00343	Oxidized thioredoxin	redox_cofactor
+C00012	Peptide	generic
+C00015	UDP	nucleotide_cofactor
+C00075	UTP	nucleotide_cofactor

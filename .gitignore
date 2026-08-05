@@ -1,0 +1,18 @@
+# raw KEGG REST cache — regenerable, and we keep bulk KEGG dumps out of the repo
+cache/
+# run outputs
+results/
+figs/data/
+figs/*.png
+figs/*.svg
+# nextflow
+work/
+.nextflow*
+# python / misc
+__pycache__/
+*.pyc
+*.pkl
+err.log
+/tmp/
+# keep: assets/map01100/ (map png + layout json) — needed by the web UI, internal/private repo
+webapp/

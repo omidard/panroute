@@ -1,0 +1,15 @@
+name: panroute
+channels:
+  - conda-forge
+  - bioconda
+dependencies:
+  - python=3.11
+  - pip
+  - networkx>=3.0
+  - requests
+  - pip:
+      # Thermodynamics — component-contribution ΔrG'° (downloads its cache on first use).
+      # If omitted, PanRoute falls back to the Rhea/MetaCyc consensus + KEGG arrows and
+      # reports reduced thermo coverage (quality gate G2), rather than failing.
+      - equilibrator-api>=0.6.0
+      - equilibrator-cache>=0.5.0

@@ -1,0 +1,37 @@
+{
+  "_doc": "Direction-aware feedstock utilisation gating (fix #3). A genome can USE a feedstock only if it encodes an uptake/activation route in the CONSUMING direction. 'uptake' KOs are strong evidence of assimilation; 'overflow_ambiguous' KOs run both ways and are NOT proof of growth on the feedstock (e.g. ackA-pta is acetate's OVERFLOW system). Extend by adding compounds.",
+  "feedstocks": {
+    "C00033": {
+      "name": "acetate",
+      "uptake": {
+        "definition": "K01895",
+        "note": "acetyl-CoA synthetase (ACS): one-step, ~irreversible, high-affinity acetate assimilation"
+      },
+      "overflow_ambiguous": {
+        "definition": "K00925 (K00625,K13788,K15024)",
+        "note": "ackA + pta: reversible; this is the acetate OVERFLOW/excretion pathway. Presence is NOT proof of acetate uptake/growth (see Parageobacillus). Counted only as 'overflow_capable'."
+      }
+    },
+    "C00132": {
+      "name": "methanol",
+      "uptake": {
+        "definition": "(K23995,K17066,K17067,K14028+K14029,K00093) ((K08093,K13812) K08094 K13831 (K00850,K16370,K21071) K01624, K00600 K00830 K00018 K11529 K01689 K01595 K00024)",
+        "note": "methanol dehydrogenase AND a C1 assimilation module (RuMP OR serine cycle). mdh ALONE is not functional methylotrophy."
+      }
+    },
+    "C00031": {
+      "name": "glucose",
+      "uptake": {
+        "definition": "K00844,K12407,K00845,(K02778+K02779),(K02790+K02791),K00847",
+        "note": "hexokinase / glucokinase / glucose-PTS: phosphorylation traps glucose for glycolysis"
+      }
+    },
+    "C00022": {
+      "name": "pyruvate",
+      "uptake": {
+        "definition": "K00016,K00169+K00170+K00171+K00172,K00161+K00162+K00627+K00382,K03737",
+        "note": "central metabolite; nearly universal. Uptake per se assumed if organism is heterotroph."
+      }
+    }
+  }
+}

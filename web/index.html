@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>PanRoute · live bioconversion route finder</title>
+<link rel="stylesheet" href="/web/style.css"/>
+</head>
+<body>
+<div id="app">
+
+  <header id="topbar">
+    <div class="brand"><span class="logo">◈</span> PanRoute
+      <span class="tag">retrosynthetic route search · all KEGG genomes</span></div>
+    <form id="query" autocomplete="off">
+      <div class="field">
+        <label>make (product)</label>
+        <input id="endInput" placeholder="e.g. 2,3-butanediol" value="2,3-butanediol"/>
+        <ul class="ac" id="endAc"></ul>
+        <span class="cid" id="endCid"></span>
+      </div>
+      <div class="arrow">←</div>
+      <div class="field">
+        <label>from (feedstock / start)</label>
+        <input id="startInput" placeholder="e.g. pyruvate" value="pyruvate"/>
+        <ul class="ac" id="startAc"></ul>
+        <span class="cid" id="startCid"></span>
+      </div>
+      <div class="field small">
+        <label>feedstock gate</label>
+        <input id="feedInput" placeholder="e.g. acetate" value="acetate"/>
+        <ul class="ac" id="feedAc"></ul>
+        <span class="cid" id="feedCid"></span>
+      </div>
+      <button id="runBtn" type="submit">▶ RUN</button>
+    </form>
+  </header>
+
+  <main id="stage">
+    <!-- LEFT: live discovery -->
+    <aside id="left" class="glass">
+      <div class="lhead">
+        <div class="stat"><b id="orgCount">0</b><span>species found</span></div>
+        <div class="stat"><b id="routeCount">0</b><span>routes</span></div>
+        <div class="stat"><b id="feasCount">0</b><span>thermo-feasible</span></div>
+      </div>
+      <div class="phase" id="phase">idle</div>
+      <div class="progress"><div id="pbar"></div></div>
+      <div class="orglist-head">Organisms discovered <span class="hint">live</span></div>
+      <ul id="orglist"></ul>
+    </aside>
+
+    <!-- CENTER: the live KEGG map -->
+    <section id="mapwrap">
+      <svg id="map" preserveAspectRatio="xMidYMid meet"></svg>
+      <div id="maplegend" class="glass">
+        <div class="ml-title">KEGG global metabolism · map01100</div>
+        <div class="ml-row"><span class="dot product"></span> product</div>
+        <div class="ml-row"><span class="dot feedstock"></span> feedstock</div>
+        <div class="ml-row"><span class="line-samp"></span> route being traced (product → feedstock)</div>
+        <div class="ml-row"><span class="dot offmap"></span> off-core-map step (peripheral)</div>
+      </div>
+      <div id="mapstatus" class="glass hidden"></div>
+    </section>
+  </main>
+
+  <!-- RESULTS -->
+  <section id="results" class="hidden">
+    <div class="rhead">
+      <h2 id="rtitle"></h2>
+      <button id="closeResults">×</button>
+    </div>
+    <div class="rgrid">
+      <div class="rcard glass" id="funnelCard">
+        <h3>Genome funnel <span class="hint">click a tier</span></h3>
+        <div id="funnel"></div>
+        <p class="caveat">Genome <i>potential</i>, not proof of production — a gene hit means the enzyme is encoded, not expressed or carrying flux. KEGG genomes are culture-biased.</p>
+      </div>
+      <div class="rcard glass" id="compCard">
+        <h3>Composition</h3>
+        <div id="donut"></div>
+      </div>
+      <div class="rcard glass" id="spCard">
+        <h3>Route-carrying species <span class="hint">click for pathways</span></h3>
+        <input id="spFilter" placeholder="filter species…"/>
+        <ul id="sptable"></ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- DETAIL DRAWER -->
+  <aside id="drawer" class="hidden glass">
+    <div class="dhead"><h3 id="dtitle"></h3><button id="closeDrawer">×</button></div>
+    <div id="dbody"></div>
+  </aside>
+
+</div>
+<script src="/web/map.js"></script>
+<script src="/web/app.js"></script>
+</body>
+</html>
