@@ -10,7 +10,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 const engine = new PanRoute();
 let GENOME_READY = false, CPD = [];
-fetch("data/ko/_ready.json").then(r => { if (r.ok) GENOME_READY = true; }).catch(() => {});
+fetch("data/ready.json").then(r => { if (r.ok) GENOME_READY = true; }).catch(() => {});
 fetch("data/compounds.json").then(r => r.json()).then(d => { CPD = Object.entries(d).map(([cid, name]) => ({ cid, name })); }).catch(() => {});
 
 /* ---- autocomplete over bundled compound names ---- */
