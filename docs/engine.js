@@ -29,6 +29,7 @@
       ]);
       this.thermo = await this.loader(this.base + "thermo.json").catch(() => ({}));
       this.aliases = await this.loader(this.base + "aliases.json").catch(() => ({}));
+      this.qual = await this.loader(this.base + "rxnqual.json").catch(() => ({}));   // reaction curation 0..3
       // adjacency
       this.out = {}; this.inn = {};
       for (const [s, d, rid] of this.net.edges) {
@@ -91,7 +92,13 @@
         const ec = new Set(); rxns.forEach(r => r.ec.forEach(e => ec.add(e)));
         steps.push({ from: path[i], to: path[i + 1], reactions: rxns, enzymes: [...ec].slice(0, 2).join("/") });
       }
-      return { length: path.length - 1,
+      // #obscure reactions (no subsystem/BiGG/Rhea mapping) and reaction-reuse (the SAME
+      // reaction realising >1 step is a carbon-skeleton graph artifact — one enzyme is not a
+      // whole pathway) — both push a route down the ranking below genuine pathways.
+      const uncur = steps.filter(st => ((this.qual || {})[st.reactions[0].rid] || 0) === 0).length;
+      const prim = steps.map(st => st.reactions[0].rid);
+      const repeats = prim.length - new Set(prim).size;
+      return { length: path.length - 1, uncur, repeats,
         path: path.map(c => ({ cid: c, name: this.cname(c) })), steps };
     }
 

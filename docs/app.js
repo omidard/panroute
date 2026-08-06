@@ -213,7 +213,11 @@ function renderPathways(routes) {
   // carbon-skeleton shortcuts), ranked by length then by #species; else fall back to length.
   const encoded = G ? routes.filter(r => (G[r.id] || 0) > 0) : routes;
   const useList = encoded.length ? encoded : routes;
-  const list = [...useList].sort((a, b) => a.length - b.length || ((G ? (G[b.id] || 0) - (G[a.id] || 0) : 0)) || a.id - b.id);
+  // rank: well-characterised routes first (fewest obscure reactions), then shorter, then
+  // more widespread — so canonical pathways beat exotic carbon-skeleton shortcuts.
+  const list = [...useList].sort((a, b) =>
+    (a.repeats || 0) - (b.repeats || 0) || (a.uncur || 0) - (b.uncur || 0) || a.length - b.length ||
+    (G ? (G[b.id] || 0) - (G[a.id] || 0) : 0) || a.id - b.id);
   const hidden = G ? routes.length - encoded.length : 0;
   const note = G
     ? (hidden > 0 ? `<span class="hint">· ${hidden} carbon-skeleton route(s) no sequenced genome encodes are hidden</span>` : "")
@@ -230,7 +234,7 @@ function renderPathways(routes) {
       + `<span class="met">${p.name}</span>`).join(" ");
     const rx = r.steps.map(s => s.reactions[0].rid).join(" · ");
     return `<div class="pw" data-id="${r.id}"><div class="pw-top">
-        <span><b class="pwrank">#${rank + 1}</b> · ${r.length} steps${rank === 0 ? " · shortest" : ""}</span>
+        <span><b class="pwrank">#${rank + 1}</b> · ${r.length} steps${rank === 0 ? " · top-ranked" : ""}${r.repeats ? ` <span class="hint" title="a reaction is reused across steps">· reuses a reaction</span>` : ""}</span>
         ${gb}${feas}<span class="pwopen">open report ↗</span></div>
       <div class="chain">${chain}</div><div class="rx">${rx}</div></div>`;
   }).join("");
