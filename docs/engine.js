@@ -28,6 +28,7 @@
         this.loader(this.base + "feedstock_rules.json").catch(() => ({ feedstocks: {} })),
       ]);
       this.thermo = await this.loader(this.base + "thermo.json").catch(() => ({}));
+      this.aliases = await this.loader(this.base + "aliases.json").catch(() => ({}));
       // adjacency
       this.out = {}; this.inn = {};
       for (const [s, d, rid] of this.net.edges) {
@@ -39,8 +40,9 @@
     cname(c) { const v = this.net.compounds[c]; return v ? (v.n || c).split(";")[0] : c; }
 
     // ---- retro search ----
-    revDist(end) {
-      const dist = { [end]: 0 }, q = [end];
+    revDist(endSet) {
+      const dist = {}, q = [];
+      for (const e of endSet) if (!(e in dist)) { dist[e] = 0; q.push(e); }
       for (let i = 0; i < q.length; i++) {
         const v = q[i];
         for (const [s] of (this.inn[v] || [])) if (!(s in dist)) { dist[s] = dist[v] + 1; q.push(s); }
@@ -48,14 +50,15 @@
       return dist;
     }
 
-    enumerate(start, end, maxLen, maxRoutes) {
-      const dist = this.revDist(end);
-      if (!(start in dist) || dist[start] > maxLen) return [];
+    enumerate(startSet, endSet, maxLen, maxRoutes) {
+      const dist = this.revDist(endSet);
+      const starts = [...startSet].filter(s => (s in dist) && dist[s] <= maxLen);
+      if (!starts.length) return [];
       const routes = []; let exp = 0;
-      const stack = [[start, [start], new Set([start])]];
+      const stack = starts.map(s => [s, [s], new Set([s])]);
       while (stack.length && routes.length < maxRoutes && exp < 400000) {
         const [node, path, onp] = stack.pop();
-        if (node === end && path.length > 1) { routes.push(path); continue; }
+        if (endSet.has(node) && path.length > 1) { routes.push(path); continue; }
         const rem = maxLen - (path.length - 1); if (rem <= 0) continue;
         const nxt = new Set();
         for (const [v] of (this.out[node] || [])) {
@@ -146,7 +149,11 @@
       emit("phase", { msg: "searching routes product → feedstock", pct: 12 });
       emit("endpoints", { start: { cid: start, name: this.cname(start), xy: this.xy(start) },
         end: { cid: end, name: this.cname(end), xy: this.xy(end) }, map: this.layout.image });
-      const routes = this.enumerate(start, end, maxLen, maxRoutes);
+      // merge stereoisomers/synonyms: a search targets the whole group (e.g. acetoin =
+      // C00466 + (R)-C00810 + (S)-C01769), so the canonical stereo-specific route is found.
+      const endSet = new Set((this.aliases && this.aliases[end]) || [end]);
+      const startSet = new Set((this.aliases && this.aliases[start]) || [start]);
+      const routes = this.enumerate(startSet, endSet, maxLen, maxRoutes);
       if (!routes.length) { emit("done", { error: `no route from ${this.cname(start)} to ${this.cname(end)}` }); return; }
       routes.forEach((r, i) => { r.id = i; r.map = this.resolveRoute(r); });
       const shortest = routes.reduce((a, b) => b.length < a.length ? b : a, routes[0]);
