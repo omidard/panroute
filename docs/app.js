@@ -204,12 +204,12 @@ function renderCatalog(filter) {
     r.onclick = () => openOrganism(ST.orgs[+r.dataset.i]));
 }
 
-/* ---- distinct pathways (clickable, highlight on map) ---- */
+/* ---- distinct pathways: ranked by length, click opens a full detail PAGE ---- */
 function renderPathways(routes) {
-  const list = [...routes].sort((a, b) => a.length - b.length);
-  $("#pwTitle").innerHTML = `Distinct pathways · <b>${routes.length}</b> found
-    <span class="hint">click one to highlight it on the map above</span>`;
-  $("#pwList").innerHTML = list.map(r => {
+  const list = [...routes].sort((a, b) => a.length - b.length || (a.id - b.id));
+  $("#pwTitle").innerHTML = `Distinct pathways · <b>${routes.length}</b> found · ranked by length
+    <span class="hint">click a pathway to open its full report (reactions · cross-database directionality · species)</span>`;
+  $("#pwList").innerHTML = list.map((r, rank) => {
     const f = ST.feas[r.id];
     const feas = f ? (f.feasible ? `<span class="badge feas">ΔG feasible ${f.dG_sum ?? ""}</span>`
                                  : `<span class="badge infeas">ΔG infeasible</span>`) : "";
@@ -217,13 +217,24 @@ function renderPathways(routes) {
       `<span class="ar">→</span><span class="enz">${r.steps[i - 1].enzymes || "?"}</span><span class="ar">→</span>`)
       + `<span class="met">${p.name}</span>`).join(" ");
     const rx = r.steps.map(s => s.reactions[0].rid).join(" · ");
-    return `<div class="pw" data-id="${r.id}"><div class="pw-top"><span>pathway ${r.id + 1} · ${r.length} steps</span>${feas}</div>
+    return `<div class="pw" data-id="${r.id}"><div class="pw-top">
+        <span><b class="pwrank">#${rank + 1}</b> · ${r.length} steps${rank === 0 ? " · shortest" : ""}</span>
+        ${feas}<span class="pwopen">open report ↗</span></div>
       <div class="chain">${chain}</div><div class="rx">${rx}</div></div>`;
   }).join("");
-  [...$("#pwList").children].forEach(el => el.onclick = () => {
-    map.highlightRoute(ST.byId[+el.dataset.id]);
-    $("#mapwrap").scrollIntoView({ behavior: "smooth", block: "center" });
-  });
+  [...$("#pwList").children].forEach(el => el.onclick = () => openRoutePage(ST.byId[+el.dataset.id]));
+}
+
+/* store route context + open the dedicated report page in a new tab */
+function openRoutePage(r) {
+  const species = ST.orgs.filter(o => (o.route_idx || []).includes(r.id))
+    .sort((a, b) => b.n_routes - a.n_routes);
+  sessionStorage.setItem("panroute_route", JSON.stringify({
+    route: r, query: { start: ST.ep.start, end: ST.ep.end },
+    feas: ST.feas[r.id] || null, species,
+    genome_pending: !!(ST.done && ST.done.genome_pending),
+  }));
+  window.open("route.html", "_blank");
 }
 
 /* ---- drawer ---- */

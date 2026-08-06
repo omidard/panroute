@@ -80,23 +80,21 @@ class MapView {
      frontier: edges are ordered by their distance (in steps) from the product, so the blue
      highlight visibly grows from the product toward the feedstock — not scattered. */
   async traceRoutes(routes, endName, endOnMap) {
+    // ONLY real reaction polylines (blue) are drawn — off-map/connector (gray) segments are
+    // not visualised. Edges ordered by distance from the product so the trace grows outward.
     const edges = []; let gateway = null;
-    for (const r of routes) r.map.steps.forEach((st, di) => {   // steps are retro order: product first
-      if (st.kind === "polyline" || st.kind === "connector") {
-        edges.push({ coords: st.coords, cls: st.kind === "connector" ? " connector" : "", dist: di });
-        if (!gateway) gateway = st.from_xy || st.to_xy || st.coords[0];
+    for (const r of routes) r.map.steps.forEach((st, di) => {
+      if (st.kind === "polyline") {
+        edges.push({ coords: st.coords, dist: di });
+        if (!gateway) gateway = st.coords[0];
       }
     });
-    edges.sort((a, b) => a.dist - b.dist);            // frontier grows from the product outward
-    if (!endOnMap && gateway) {                       // pin off-core-map product at the gateway
-      const gx = gateway[0] - 150, gy = gateway[1] - 210;
-      await this._drawEdge([[gateway[0], gateway[1]], [gx, gy]], " dashed");
-      this.endpoint([gx, gy], endName, "product offmap");
-    }
+    edges.sort((a, b) => a.dist - b.dist);
+    if (!endOnMap && gateway) this.endpoint(gateway, endName, "product offmap");  // pin product, no gray line
     let last = -1;
     for (const e of edges) {
-      await this._drawEdge(e.coords, e.cls);
-      if (e.dist !== last) { this.focus(true); last = e.dist; await sleepM(140); }  // pause between frontier rings
+      await this._drawEdge(e.coords, "");
+      if (e.dist !== last) { this.focus(true); last = e.dist; await sleepM(140); }
       else await sleepM(55);
     }
     this.focus(true);
