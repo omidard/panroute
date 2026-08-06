@@ -39,10 +39,31 @@
   .spitem i{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .pending{color:var(--amber);font-size:13px;background:rgba(255,181,71,.08);border-left:2px solid var(--amber);
     padding:8px 12px;border-radius:6px}
+  /* ---- modularised metabolic map ---- */
+  .subchips{display:flex;flex-wrap:wrap;gap:6px;margin:6px 0 4px}
+  .subchip{font-size:11.5px;padding:3px 10px;border-radius:16px;background:rgba(57,192,255,.12);color:var(--cyan);border:1px solid #244}
+  .module{border:1px solid var(--stroke);border-radius:14px;margin:14px 0;background:linear-gradient(180deg,rgba(20,30,48,.5),rgba(11,18,32,.5))}
+  .modhead{display:flex;align-items:center;gap:9px;padding:11px 16px;border-bottom:1px solid var(--stroke);font-weight:700}
+  .modhead .mdot{width:11px;height:11px;border-radius:3px}
+  .modhead .msub{color:var(--dim);font-weight:400;font-size:12px}
+  .modflow{display:flex;align-items:center;flex-wrap:wrap;gap:6px;padding:18px 16px}
+  .metnode{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:120px}
+  .metnode .struct{background:#fff;border-radius:10px;padding:4px;width:118px;height:98px;display:flex;align-items:center;justify-content:center;border:1px solid #2a3a52}
+  .metnode .struct.nostruct{background:#0c1524;color:var(--dim);font-size:10px;text-align:center;padding:8px}
+  .metnode .mname{font-size:11.5px;text-align:center;max-width:130px;line-height:1.2;font-weight:600}
+  .metnode.endpt .mname{color:var(--neon)} .metnode.startpt .mname{color:var(--amber)}
+  .rxstep{display:flex;flex-direction:column;align-items:center;min-width:120px;padding:0 4px}
+  .rxstep .rxarrow{width:100%;height:2px;background:linear-gradient(90deg,#2f7bff,#39c0ff);position:relative}
+  .rxstep .rxarrow:after{content:"▶";position:absolute;right:-3px;top:-9px;color:#39c0ff;font-size:12px}
+  .rxstep .enz{color:var(--cyan);font-family:ui-monospace,monospace;font-size:12px;font-weight:700;margin-bottom:3px}
+  .rxstep .rxmeta{font-size:10px;color:var(--dim);margin-top:3px;text-align:center}
+  .rxstep .rxmeta a{color:var(--cyan);text-decoration:none}
+  .rxstep .dgchip{font-size:10px;padding:1px 6px;border-radius:10px;margin-top:3px}
 </style>
 </head>
 <body>
 <div id="rpt">loading…</div>
+<script src="https://unpkg.com/smiles-drawer@2.0.3/dist/smiles-drawer.min.js"></script>
 <script src="route.js"></script>
 </body>
 </html>

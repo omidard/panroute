@@ -16,6 +16,25 @@ net = json.load(open(os.path.join(OUT, "network.json")))
 rxn_ids = set(net["rxn"].keys())
 sys.stderr.write(f"[rxninfo] {len(rxn_ids)} network reactions\n")
 
+# --- reaction -> subsystem(s) from KEGG PATHWAY (specific rn00xxx maps only; drop overview) ---
+sys.path.insert(0, ROOT)
+from panroute.keggfetch import KeggClient
+_cl = KeggClient(os.path.join(ROOT, "cache"), offline=True)
+def subsystems(rid):
+    rec = _cl.get_entries([f"rn:{rid}"]).get(f"rn:{rid}", "")
+    subs, field = [], None
+    for line in rec.splitlines():
+        key = line[:12].strip()
+        if key: field = key
+        if field != "PATHWAY":
+            continue
+        m = __import__("re").match(r"\s*(rn\d{5})\s+(.+)$", line[12:] if key == "PATHWAY" else line)
+        if m:
+            pid, name = m.group(1), m.group(2).strip()
+            if pid[2:4] == "00":            # rn00xxx = specific subsystem (not rn011xx/012xx overview)
+                subs.append(name)
+    return subs[:3]
+
 # --- MetaNetX reac_xref: build MNXR -> {db: ids} and kegg R -> MNXR (+ equation) ---
 DBMAP = {"bigg.reaction": "bigg", "biggR": "bigg", "rhea": "rhea", "rheaR": "rhea",
          "seed.reaction": "seed", "seedR": "seed", "metacyc.reaction": "metacyc",
@@ -89,6 +108,7 @@ for rid in rxn_ids:
     info[rid] = {
         "ec": net["rxn"][rid].get("e", ""),
         "eq": kegg_eq.get(rid, ""),
+        "subsystems": subsystems(rid),
         "kegg_dir": "reversible" if net["rxn"][rid].get("d") == "b" else "left→right",
         "mnx": mnx,
         "bigg": sorted(ids.get("bigg", []))[:6],

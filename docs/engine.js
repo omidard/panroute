@@ -158,7 +158,8 @@
           from_name: this.cname(st.from), to_name: this.cname(st.to), from_xy: this.xy(st.from), to_xy: this.xy(st.to) }),
           index: k, total: steps.length, pct: 12 + Math.round(28 * (k + 1) / steps.length) });
       }
-      emit("routes", { routes, shortest_len: shortest.length, n_routes: routes.length });
+      emit("routes", { routes, shortest_len: shortest.length, n_routes: routes.length,
+        capped: routes.length >= maxRoutes });
       // thermo feasibility
       const feas = {};
       routes.forEach(r => { feas[r.id] = this.routeFeasible(r); emit("thermo", { route_id: r.id, feasible: feas[r.id].feasible, length: r.length, dG_sum: feas[r.id].dG_sum }); });
@@ -197,6 +198,9 @@
             code, thermo_feasible: feasible };
       }
       const rows = Object.values(bySpecies).sort((a, b) => b.n_routes - a.n_routes);
+      const routeGenomes = {};      // route id -> # species that encode it
+      for (const row of rows) for (const i of row.route_idx) routeGenomes[i] = (routeGenomes[i] || 0) + 1;
+      emit("route_genomes", routeGenomes);
       emit("phase", { msg: `found ${rows.length} species with a native route`, pct: 82 });
       const gc = { Gpos: 0, Gneg: 0, Arch: 0, Other: 0 };
       let up = 0, ov = 0;

@@ -82,10 +82,12 @@ function handleEvent(event, data) {
     $("#mapstatus").textContent = `tracing  ${data.end.name}  →  ${data.start.name}`; }
   else if (event === "explore") { /* map trace runs on the 'routes' event */ }
   else if (event === "routes") { ST.routes = data.routes; data.routes.forEach(r => ST.byId[r.id] = r);
-    $("#routeCount").textContent = data.n_routes;
+    ST.capped = data.capped;
+    $("#routeCount").textContent = data.capped ? data.n_routes + "+" : data.n_routes;
     $("#mapstatus").textContent = `connecting  ${ST.ep.end.name} → ${ST.ep.start.name}  via ${data.n_routes} real pathways`;
     map.traceRoutes(data.routes, ST.ep.end.name, !!(ST.ep.end && ST.ep.end.xy)); }
   else if (event === "thermo") { ST.feas[data.route_id] = data; $("#feasCount").textContent = Object.values(ST.feas).filter(x => x.feasible).length; }
+  else if (event === "route_genomes") { ST.routeGenomes = data; }
   else if (event === "organism") { addOrganism(data); }
   else if (event === "done") { ST.done = data;
     if (data.error) { $("#phase").textContent = "✕ " + data.error; $("#mapstatus").textContent = data.error; return; }
@@ -206,20 +208,30 @@ function renderCatalog(filter) {
 
 /* ---- distinct pathways: ranked by length, click opens a full detail PAGE ---- */
 function renderPathways(routes) {
-  const list = [...routes].sort((a, b) => a.length - b.length || (a.id - b.id));
-  $("#pwTitle").innerHTML = `Distinct pathways · <b>${routes.length}</b> found · ranked by length
-    <span class="hint">click a pathway to open its full report (reactions · cross-database directionality · species)</span>`;
+  const G = ST.routeGenomes || null;
+  // when genomes are known, show only routes a genome actually encodes (drops spurious
+  // carbon-skeleton shortcuts), ranked by length then by #species; else fall back to length.
+  const encoded = G ? routes.filter(r => (G[r.id] || 0) > 0) : routes;
+  const useList = encoded.length ? encoded : routes;
+  const list = [...useList].sort((a, b) => a.length - b.length || ((G ? (G[b.id] || 0) - (G[a.id] || 0) : 0)) || a.id - b.id);
+  const hidden = G ? routes.length - encoded.length : 0;
+  const note = G
+    ? (hidden > 0 ? `<span class="hint">· ${hidden} carbon-skeleton route(s) no sequenced genome encodes are hidden</span>` : "")
+    : (ST.capped ? `<span class="hint">(search cap — more exist)</span>` : "");
+  $("#pwTitle").innerHTML = `Distinct pathways · <b>${list.length}${(!G && ST.capped) ? "+" : ""}</b>${G ? " encoded by genomes" : " found"} · ranked ${note}
+    <span class="hint">click a pathway to open its full report (structures · reactions · cross-DB directionality · species)</span>`;
   $("#pwList").innerHTML = list.map((r, rank) => {
     const f = ST.feas[r.id];
     const feas = f ? (f.feasible ? `<span class="badge feas">ΔG feasible ${f.dG_sum ?? ""}</span>`
                                  : `<span class="badge infeas">ΔG infeasible</span>`) : "";
+    const gb = G ? `<span class="badge routes">${(G[r.id] || 0).toLocaleString()} species</span>` : "";
     const chain = r.path.map((p, i) => (i === 0 ? "" :
       `<span class="ar">→</span><span class="enz">${r.steps[i - 1].enzymes || "?"}</span><span class="ar">→</span>`)
       + `<span class="met">${p.name}</span>`).join(" ");
     const rx = r.steps.map(s => s.reactions[0].rid).join(" · ");
     return `<div class="pw" data-id="${r.id}"><div class="pw-top">
         <span><b class="pwrank">#${rank + 1}</b> · ${r.length} steps${rank === 0 ? " · shortest" : ""}</span>
-        ${feas}<span class="pwopen">open report ↗</span></div>
+        ${gb}${feas}<span class="pwopen">open report ↗</span></div>
       <div class="chain">${chain}</div><div class="rx">${rx}</div></div>`;
   }).join("");
   [...$("#pwList").children].forEach(el => el.onclick = () => openRoutePage(ST.byId[+el.dataset.id]));

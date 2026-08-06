@@ -247,3 +247,6 @@ html,body{height:auto;overflow-x:hidden}
 #examples .ex{background:#0c1524;border:1px solid var(--stroke);color:var(--ink);border-radius:20px;
   padding:5px 12px;font-size:12px;cursor:pointer;transition:border .12s}
 #examples .ex:hover{border-color:var(--cyan);color:#fff}
+.pwrank{color:var(--neon);font-variant-numeric:tabular-nums}
+.pwopen{margin-left:auto;color:var(--cyan);font-size:11px;opacity:.7}
+.pw:hover .pwopen{opacity:1}
