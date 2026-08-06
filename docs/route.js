@@ -22,7 +22,7 @@ async function main() {
   if (!raw) { document.getElementById("rpt").innerHTML = "<p>No route selected. Open a pathway from the main page.</p>"; return; }
   const D = JSON.parse(raw);
   [INFO, SMI] = await Promise.all([
-    fetch("rxninfo.json").then(r => r.json()).catch(() => ({})),
+    fetch("data/rxninfo.json").then(r => r.json()).catch(() => ({})),
     fetch("data/smiles.json").then(r => r.json()).catch(() => ({})),
   ]);
   const r = D.route, q = D.query;
