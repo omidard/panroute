@@ -30,6 +30,7 @@
       this.thermo = await this.loader(this.base + "thermo.json").catch(() => ({}));
       this.aliases = await this.loader(this.base + "aliases.json").catch(() => ({}));
       this.qual = await this.loader(this.base + "rxnqual.json").catch(() => ({}));   // reaction curation 0..3
+      this.rxnko = await this.loader(this.base + "rxnko.json").catch(() => ({}));    // multi-EC complex KO groups
       // adjacency
       this.out = {}; this.inn = {};
       for (const [s, d, rid] of this.net.edges) {
@@ -194,14 +195,18 @@
         orgs.forEach(o => (orgKO[o] = orgKO[o] || new Set()).add(ko));
       }));
       // gate
-      const stepKos = r => r.steps.map(s => new Set(s.reactions.flatMap(x => x.kos)));
-      const routeStepKos = routes.map(stepKos);
-      const encodes = (H, ri) => routeStepKos[ri].every(ks => { for (const k of ks) if (H.has(k)) return true; return false; });
+      // reaction satisfied: a multi-EC complex needs ALL catalytic components (AND across EC
+      // groups), OR within isozymes; a single-enzyme reaction = OR over its KOs. A step is
+      // satisfied if ANY realising reaction is satisfied; a route is encoded if every step is.
+      const RK = this.rxnko || {};
+      const rxnSat = (H, rx) => { const g = RK[rx.rid];
+        return g ? g.every(grp => grp.some(k => H.has(k))) : (rx.kos || []).some(k => H.has(k)); };
+      const encodes = (H, route) => route.steps.every(s => s.reactions.some(rx => rxnSat(H, rx)));
       const termKos = new Set(); routes.forEach(r => r.steps[r.steps.length - 1].reactions.forEach(x => x.kos.forEach(k => termKos.add(k))));
       const bySpecies = {}; let t0 = new Set();
       for (const code in orgKO) {
         const H = orgKO[code], t = this.tax[code]; if (!t) continue;
-        const idx = []; routes.forEach(r => { if (encodes(H, r.id)) idx.push(r.id); });
+        const idx = []; routes.forEach(r => { if (encodes(H, r)) idx.push(r.id); });
         for (const k of termKos) if (H.has(k)) { t0.add(t[0]); break; }
         if (!idx.length) continue;
         const sp = t[0];
