@@ -3,7 +3,7 @@
 **Retrosynthetic route search across all KEGG genomes.** Given a *start* metabolite
 (feedstock) and an *end* metabolite (target), PanRoute finds every thermodynamically
 feasible native route through the KEGG reaction network, then reports which prokaryotic
-genomes in KEGG *encode* a complete route — with an honest, tiered confidence funnel.
+genomes in KEGG *encode* a complete route.
 
 It replaces the hand-written-route survey in `/data/bioconversion`. See
 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the full design and the five flaws it
