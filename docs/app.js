@@ -34,7 +34,7 @@ function wireAC(inputId, acId, cidId) {
   inp.addEventListener("keydown", e => { if (!ac.classList.contains("show")) return; const lis = [...ac.children];
     if (e.key === "ArrowDown") { sel = Math.min(sel + 1, lis.length - 1); e.preventDefault(); }
     else if (e.key === "ArrowUp") { sel = Math.max(sel - 1, 0); e.preventDefault(); }
-    else if (e.key === "Enter") { if (sel >= 0) { lis[sel].dispatchEvent(new Event("mousedown")); e.preventDefault(); } return; }
+    else if (e.key === "Enter") { if (sel >= 0) { lis[sel].dispatchEvent(new Event("mousedown", { bubbles: true })); e.preventDefault(); } return; }
     lis.forEach((l, i) => l.classList.toggle("sel", i === sel)); });
   inp.addEventListener("blur", () => setTimeout(() => ac.classList.remove("show"), 160));
 }
@@ -143,9 +143,9 @@ function renderResults() {
   // HERO ROW: big product card + stat cards
   $("#herorow").innerHTML = `
     <div class="hero glass">
-      <div class="ribbon">${d.T2 > 0 ? "NATIVE ROUTE" : "ENGINEERED ONLY"}</div>
+      <div class="ribbon" style="${d.T2 > 0 ? "" : "background:var(--amber)"}">${d.T2 > 0 ? "NATIVE ROUTE" : (ST.routes.length ? "NO GENOME-ENCODED ROUTE" : "NO ROUTE FOUND")}</div>
       <div class="hero-head">${ST.ep.end.name}<span>from ${ST.ep.start.name}</span></div>
-      <div class="hero-num">${d.T2.toLocaleString()}<span>prokaryote species encode a full native route</span></div>
+      <div class="hero-num">${d.T2.toLocaleString()}<span>${d.T2 > 0 ? "prokaryote species encode a full native route" : (ST.routes.length ? "genomes encode a route within the search horizon — carbon-skeleton routes exist but the native path may be longer (see below)" : "carbon-skeleton routes within the search horizon")}</span></div>
       <div class="hero-gram"><div class="gbar">${gramBar}</div><div class="gleg">${gramLeg}</div></div>
       <div class="hero-route">committed route&nbsp; <b>${enzymes || "—"}</b></div>
     </div>
@@ -212,18 +212,24 @@ function renderPathways(routes) {
   // when genomes are known, show only routes a genome actually encodes (drops spurious
   // carbon-skeleton shortcuts), ranked by length then by #species; else fall back to length.
   const encoded = G ? routes.filter(r => (G[r.id] || 0) > 0) : routes;
+  const noneEncoded = G && encoded.length === 0;
   const useList = encoded.length ? encoded : routes;
   // rank: well-characterised routes first (fewest obscure reactions), then shorter, then
   // more widespread — so canonical pathways beat exotic carbon-skeleton shortcuts.
   const list = [...useList].sort((a, b) =>
     (a.repeats || 0) - (b.repeats || 0) || (a.uncur || 0) - (b.uncur || 0) || a.length - b.length ||
     (G ? (G[b.id] || 0) - (G[a.id] || 0) : 0) || a.id - b.id);
-  const hidden = G ? routes.length - encoded.length : 0;
-  const note = G
-    ? (hidden > 0 ? `<span class="hint">· ${hidden} carbon-skeleton route(s) no sequenced genome encodes are hidden</span>` : "")
-    : (ST.capped ? `<span class="hint">(search cap — more exist)</span>` : "");
-  $("#pwTitle").innerHTML = `Distinct pathways · <b>${list.length}${(!G && ST.capped) ? "+" : ""}</b>${G ? " encoded by genomes" : " found"} · ranked ${note}
-    <span class="hint">click a pathway to open its full report (structures · reactions · cross-DB directionality · species)</span>`;
+  if (noneEncoded) {
+    $("#pwTitle").innerHTML = `Distinct pathways · <b>0</b> encoded by any KEGG genome
+      <span class="hint">— ${routes.length} carbon-skeleton route(s) exist but no sequenced prokaryote encodes one within the ${ST.done ? ST.done.shortest : ""}-step search horizon. The native pathway may be longer than a bioconversion step-count (e.g. glucose→pyruvate is ~10-step glycolysis). The skeleton routes are shown below for inspection.</span>`;
+  } else {
+    const hidden = G ? routes.length - encoded.length : 0;
+    const note = G
+      ? (hidden > 0 ? `<span class="hint">· ${hidden} carbon-skeleton route(s) no sequenced genome encodes are hidden</span>` : "")
+      : (ST.capped ? `<span class="hint">(search cap — more exist)</span>` : "");
+    $("#pwTitle").innerHTML = `Distinct pathways · <b>${list.length}${(!G && ST.capped) ? "+" : ""}</b>${G ? " encoded by genomes" : " found"} · ranked ${note}
+      <span class="hint">click a pathway to open its full report (structures · reactions · cross-DB directionality · species)</span>`;
+  }
   $("#pwList").innerHTML = list.map((r, rank) => {
     const f = ST.feas[r.id];
     const feas = f ? (f.feasible ? `<span class="badge feas">ΔG feasible ${f.dG_sum ?? ""}</span>`
