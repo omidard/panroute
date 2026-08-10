@@ -31,6 +31,8 @@
       this.aliases = await this.loader(this.base + "aliases.json").catch(() => ({}));
       this.qual = await this.loader(this.base + "rxnqual.json").catch(() => ({}));   // reaction curation 0..3
       this.rxnko = await this.loader(this.base + "rxnko.json").catch(() => ({}));    // multi-EC complex KO groups
+      this.sides = await this.loader(this.base + "rxnsides.json").catch(() => ({})); // L/R sides for signed ΔG
+      this.dgSuspect = new Set(await this.loader(this.base + "thermo_suspect.json").catch(() => [])); // |ΔG|>200 = unbalanced artifact
 
       // ---- collapse synonym compound IDs to one canonical node, IN THE GRAPH ----
       // KEGG fragments a metabolite across several compound IDs (e.g. 2-acetolactate C00900 /
@@ -169,12 +171,30 @@
 
     // ---- thermo feasibility of a route (ΔG if available, else KEGG arrow) ----
     routeFeasible(route) {
-      let ok = true, dgs = [];
+      // ΔG is stored as-written (left => right). A step that crosses a reaction from its
+      // product side to its substrate side is a REVERSE traversal whose effective ΔG is -dg
+      // (audit A5). Determine the direction from rxnsides and sign ΔG accordingly.
+      let ok = true, dgs = [], unknown = 0;
+      const CN = c => this.canon[c] || c;
       for (const st of route.steps) {
         const rid = st.reactions[0].rid, dg = this.thermo[rid];
-        if (typeof dg === "number") { dgs.push(dg); if (dg > REV_MARGIN) ok = false; }
+        // |ΔG|>200 kJ/mol almost always means an unbalanced/generic-R-group equation, not real
+        // thermodynamics — treat as unknown rather than let it flip feasibility (audit A5).
+        if (typeof dg !== "number" || this.dgSuspect.has(rid)) { unknown++; continue; }
+        let eff = dg;
+        const sd = this.sides[rid];
+        if (sd) {
+          const L = new Set(sd.L.map(CN)), R = new Set(sd.R.map(CN));
+          const f = CN(st.from), t = CN(st.to);
+          if (R.has(f) && L.has(t) && !(L.has(f) && R.has(t))) eff = -dg;   // reverse traversal
+          else if (L.has(f) && R.has(t)) eff = dg;                          // forward (as-written)
+          // else ambiguous (shared compound / not found): keep as-written, best effort
+        }
+        dgs.push(eff);
+        if (eff > REV_MARGIN) ok = false;                                   // strongly uphill as traversed
       }
-      return { feasible: ok, dG_sum: dgs.length ? Math.round(dgs.reduce((a, b) => a + b, 0) * 10) / 10 : null };
+      return { feasible: ok, dG_sum: dgs.length ? Math.round(dgs.reduce((a, b) => a + b, 0) * 10) / 10 : null,
+        dG_known: dgs.length, dG_unknown: unknown };
     }
     species(name) { const t = name.replace(/'/g, "").split(/\s+/); return t.length >= 2 ? t.slice(0, 2).join(" ") : t[0]; }
 
