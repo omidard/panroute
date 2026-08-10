@@ -101,7 +101,39 @@ are described in `docs/ARCHITECTURE.md §7`.
 
 ## Web app
 
-`webapp/` serves the precomputed `webapp_*.json` bundles (route DAG + species funnel).
-See `webapp/README.md`. **Licensing:** public serving of KEGG-derived data is restricted;
-the data layer is abstracted so KEGG can be swapped for MetaCyc/BiGG/ModelSEED for a public
-deployment.
+The shipped app is the **client-side JS engine** at <https://omidard.github.io/panroute/>
+(`docs/engine.js`, node-testable via an injectable `loader`). It mirrors the Python engine
+but is the canonical runtime: it runs *any* start→end pair live in the browser over the
+bundled static KEGG data (`docs/data/`), with the same aliasing, multi-EC subunit-AND gating,
+and signed-ΔG feasibility as the pipeline. The Python CLI/Nextflow path is for batch/offline
+reproduction of the data bundle. **Licensing:** public serving of KEGG-derived data is
+restricted; the data layer is abstracted so KEGG can be swapped for MetaCyc/BiGG/ModelSEED.
+
+### Reproducing the data bundle
+
+`docs/data/` is rebuilt by the `bin/precompute_*.py` scripts (each is idempotent and cached):
+`precompute_clientdata` (network/taxonomy), `precompute_kogenomes` (per-KO genome lists),
+`precompute_aliases` (compound-identity groups), `precompute_thermo` + `backfill_thermo`
+(eQuilibrator ΔrG′°), `precompute_rxnsides` (L/R sides for signed ΔG), `precompute_rxnko`
+(complex subunit groups), `precompute_rxninfo`/`precompute_smiles`. Every correction is a
+script here, not an ad-hoc data patch, so a rebuild reproduces the corrected bundle.
+
+### Known limitations (honest caveats)
+
+- **Distant pairs are FBA territory.** Bounded retrosynthetic search (default ≤6 steps) will
+  not find a native long pathway (e.g. glucose→pyruvate is ~10-step glycolysis). When no
+  genome encodes a route *within the horizon*, the UI says so explicitly rather than implying
+  the conversion is impossible or "engineered only."
+- **~2,000 reactions are uncreditable to genomes.** KEGG annotates some reactions only with
+  eukaryote-specific KOs (e.g. K00001/K00006 list only insects/human); bacteria use different
+  KOs for the same EC. Where a reaction carries *only* such KOs, no prokaryote is credited.
+  Route-critical central metabolism is unaffected (verified populated).
+- **Same-EC obligate heterodimers may be over-credited.** Multi-EC complexes get subunit-AND
+  gating (`rxnko.json`), but two subunits sharing one EC (e.g. AHAS large+regulatory, both
+  EC 2.2.1.6) cannot be split by EC alone, so an OR over them can over-credit a genome that
+  has only one subunit. Bounded (~25% on the few affected reactions).
+- **L-/D-stereoisomer merges** (e.g. lactate) are intentional at the routing layer; strain
+  stereospecificity is not resolved.
+- **ΔG coverage ~92%** of routable reactions; `|ΔG|>200 kJ/mol` (unbalanced/generic-R-group
+  equations) is flagged suspect (`thermo_suspect.json`) and treated as *unknown*, never gated.
+  A genome KO hit means the enzyme is *encoded* — not expressed, regulated, or carrying flux.
