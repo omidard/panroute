@@ -31,15 +31,38 @@
       this.aliases = await this.loader(this.base + "aliases.json").catch(() => ({}));
       this.qual = await this.loader(this.base + "rxnqual.json").catch(() => ({}));   // reaction curation 0..3
       this.rxnko = await this.loader(this.base + "rxnko.json").catch(() => ({}));    // multi-EC complex KO groups
-      // adjacency
+
+      // ---- collapse synonym compound IDs to one canonical node, IN THE GRAPH ----
+      // KEGG fragments a metabolite across several compound IDs (e.g. 2-acetolactate C00900 /
+      // (S)-C06010), which splits a single pathway across un-connected nodes. Merge each alias
+      // group to one representative so the graph is connected.
+      this.canon = {}; this.canonName = {}; this.canonXY = {};
+      const seen = new Set();
+      for (const cid in this.aliases) {
+        const g = this.aliases[cid], key = g.join(",");
+        if (seen.has(key)) continue; seen.add(key);
+        const rep = g.find(c => this.layout.compounds[c]) || g[0];   // prefer one with map coords
+        for (const c of g) this.canon[c] = rep;
+        const names = g.map(c => (this.net.compounds[c] || {}).n || c);
+        this.canonName[rep] = names.reduce((a, b) => (a && a.length <= b.length ? a : b));   // shortest = generic
+        const xc = g.find(c => this.layout.compounds[c]);
+        if (xc) this.canonXY[rep] = this.layout.compounds[xc];
+      }
+      const CN = c => this.canon[c] || c;
+
+      // adjacency (over canonical nodes)
       this.out = {}; this.inn = {};
       for (const [s, d, rid] of this.net.edges) {
-        (this.out[s] = this.out[s] || []).push([d, rid]);
-        (this.inn[d] = this.inn[d] || []).push([s, rid]);
+        const cs = CN(s), cd = CN(d);
+        if (cs === cd) continue;                       // self-loop introduced by the merge
+        (this.out[cs] = this.out[cs] || []).push([cd, rid]);
+        (this.inn[cd] = this.inn[cd] || []).push([cs, rid]);
       }
     }
 
-    cname(c) { const v = this.net.compounds[c]; return v ? (v.n || c).split(";")[0] : c; }
+    cn(c) { return this.canon[c] || c; }
+    cname(c) { const r = this.cn(c); if (this.canonName[r]) return this.canonName[r].split(";")[0];
+      const v = this.net.compounds[r] || this.net.compounds[c]; return v ? (v.n || c).split(";")[0] : c; }
 
     // ---- retro search ----
     revDist(endSet) {
@@ -56,11 +79,15 @@
       const dist = this.revDist(endSet);
       const starts = [...startSet].filter(s => (s in dist) && dist[s] <= maxLen);
       if (!starts.length) return [];
-      const routes = []; let exp = 0;
+      // Enumerate a LARGE candidate pool (not just maxRoutes), then rank by QUALITY so
+      // canonical routes (no reaction-reuse, well-characterised, short) survive instead of
+      // being crowded out of a small length-only cap by exotic carbon-skeleton shortcuts.
+      const ENUM = Math.max(maxRoutes * 8, 600);
+      const paths = []; let exp = 0;
       const stack = starts.map(s => [s, [s], new Set([s])]);
-      while (stack.length && routes.length < maxRoutes && exp < 400000) {
+      while (stack.length && paths.length < ENUM && exp < 800000) {
         const [node, path, onp] = stack.pop();
-        if (endSet.has(node) && path.length > 1) { routes.push(path); continue; }
+        if (endSet.has(node) && path.length > 1) { paths.push(path); continue; }
         const rem = maxLen - (path.length - 1); if (rem <= 0) continue;
         const nxt = new Set();
         for (const [v] of (this.out[node] || [])) {
@@ -69,11 +96,12 @@
           nxt.add(v);
         }
         exp++;
-        [...nxt].sort((a, b) => (dist[b] || 1e9) - (dist[a] || 1e9))
+        [...nxt].sort((a, b) => ((b in dist) ? dist[b] : 1e9) - ((a in dist) ? dist[a] : 1e9))
           .forEach(v => stack.push([v, path.concat(v), new Set(onp).add(v)]));
       }
-      routes.sort((a, b) => a.length - b.length);
-      return routes.slice(0, maxRoutes).map(p => this.buildRoute(p));
+      const built = paths.map(p => this.buildRoute(p));
+      built.sort((a, b) => (a.repeats - b.repeats) || (a.uncur - b.uncur) || (a.length - b.length));
+      return built.slice(0, maxRoutes);
     }
 
     reactionsFor(u, v) {   // reactions realising step u->v (unique)
@@ -113,7 +141,7 @@
       if (a && b) return { kind: "connector", coords: [a, b], reaction: rid };
       return { kind: "offmap", coords: null, reaction: rid };
     }
-    xy(c) { return this.layout.compounds[c] || null; }
+    xy(c) { return this.canonXY[c] || this.layout.compounds[c] || (this.canon[c] ? this.layout.compounds[this.canon[c]] : null) || null; }
 
     // ---- feedstock direction gating (mirror feedstock.py) ----
     compileExpr(expr) {
@@ -157,11 +185,9 @@
       emit("phase", { msg: "searching routes product → feedstock", pct: 12 });
       emit("endpoints", { start: { cid: start, name: this.cname(start), xy: this.xy(start) },
         end: { cid: end, name: this.cname(end), xy: this.xy(end) }, map: this.layout.image });
-      // merge stereoisomers/synonyms: a search targets the whole group (e.g. acetoin =
-      // C00466 + (R)-C00810 + (S)-C01769), so the canonical stereo-specific route is found.
-      const endSet = new Set((this.aliases && this.aliases[end]) || [end]);
-      const startSet = new Set((this.aliases && this.aliases[start]) || [start]);
-      const routes = this.enumerate(startSet, endSet, maxLen, maxRoutes);
+      // synonym IDs are already merged in the graph (this.canon); search canonical endpoints
+      const startC = this.cn(start), endC = this.cn(end);
+      const routes = this.enumerate(new Set([startC]), new Set([endC]), maxLen, maxRoutes);
       if (!routes.length) { emit("done", { error: `no route from ${this.cname(start)} to ${this.cname(end)}` }); return; }
       routes.forEach((r, i) => { r.id = i; r.map = this.resolveRoute(r); });
       const shortest = routes.reduce((a, b) => b.length < a.length ? b : a, routes[0]);

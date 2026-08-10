@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
-"""Compound identity groups so a search targets ALL forms of a metabolite (stereoisomers,
-protonation/tautomer variants). Done by CHEMISTRY, not id-strings: KEGG compounds are grouped
-by their InChIKey connectivity block (first 14 chars, stereo/charge-independent) via MetaNetX,
-with name-base grouping as a fallback for compounds lacking an InChIKey.
+"""Compound synonym groups so a search targets all forms of ONE metabolite (generic +
+stereo/anomeric/protonation variants), WITHOUT merging chemically distinct metabolites.
 
-Why it matters: KEGG splits e.g. acetoin into C00466 (generic, NO KO-annotated reactions),
-C00810 ((R)-, the canonical alsD product WITH KOs) and C01769 ((S)-). Searching the generic
-form alone returns 0 genomes. Merging by identity fixes this for every such metabolite.
+Method: group by (base name with stereo/config descriptors stripped) + (carbon count),
+then require identical molecular FORMULA within a group (from MetaNetX, fallback KEGG cache).
+The NAME is the correct discriminator: (R)-/(S)-/generic acetoin share the base name "acetoin"
+and merge; D-glucose vs D-galactose have DIFFERENT base names and stay separate (the InChIKey
+connectivity block is stereo-blind and wrongly merged them). Generic class terms (D-Hexose,
+D-Aldose) keep their own base name and do not merge into a specific sugar.
 
-Output docs/data/aliases.json = {cid: [all cids in its identity group]}."""
+Output docs/data/aliases.json = {cid: [all cids in its group]}."""
 import json, os, re
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT = os.path.join(ROOT, "docs", "data")
 MNX = "/data/mnx_tmp"
 net = json.load(open(f"{OUT}/network.json"))
 C = net["compounds"]
-want = set(C)
 
-# KEGG C -> MNX
+# molecular formula per KEGG compound (MetaNetX chem_prop col 4 via chem_xref)
 kegg2mnx = {}
 with open(f"{MNX}/chem_xref.tsv") as fh:
     for line in fh:
@@ -26,83 +26,55 @@ with open(f"{MNX}/chem_xref.tsv") as fh:
         p = line.split("\t")
         if len(p) >= 2 and p[0].startswith("kegg.compound:"):
             cid = p[0].split(":", 1)[1]
-            if cid in want:
+            if cid in C:
                 kegg2mnx.setdefault(cid, p[1])
-# MNX -> InChIKey connectivity block
+mnx_formula = {}
 need = set(kegg2mnx.values())
-mnx_ikey = {}
 with open(f"{MNX}/chem_prop.tsv") as fh:
     for line in fh:
         if line.startswith("#"):
             continue
         p = line.rstrip("\n").split("\t")
-        if p[0] in need and len(p) >= 8 and p[7].startswith("InChIKey="):
-            mnx_ikey[p[0]] = p[7].split("=", 1)[1].split("-")[0]     # 14-char connectivity block
+        if p[0] in need and len(p) >= 4 and p[3]:
+            mnx_formula[p[0]] = p[3]
+def formula(cid):
+    return mnx_formula.get(kegg2mnx.get(cid, ""), "")
 
-# group by InChIKey block
-by_ikey = {}
-for cid, mnx in kegg2mnx.items():
-    ik = mnx_ikey.get(mnx)
-    if ik:
-        by_ikey.setdefault(ik, set()).add(cid)
-
-# name-base fallback (for compounds without an InChIKey)
+DESC = re.compile(
+    r"^\(\s*[0-9RSEZ,\+\-'a-z ]+\)\s*-?\s*"                          # (R)- (2R,3S)- (+)-
+    r"|^(meso|cis|trans|syn|anti|DL|D|L|alpha|beta|gamma|delta|epsilon|n|sn|o|m|p|"
+    r"threo|erythro|allo|xylo|arabino|lyxo|ribo|gluco|galacto|manno)\s*-\s*",
+    re.IGNORECASE)
 def base(name):
     n = name.split(";")[0].strip(); prev = None
     while prev != n:
         prev = n
-        n = re.sub(r"^\(\s*[0-9RSEZ,\+\-'a-z ]+\)\s*-?\s*", "", n)
-        n = re.sub(r"^(meso|cis|trans|DL|D|L|alpha|beta|n|sn|threo|erythro)\s*-\s*", "", n, flags=re.I)
+        n = DESC.sub("", n)
     return re.sub(r"\s+", " ", n).lower().strip()
-by_name = {}
+
+groups = {}
 for cid, v in C.items():
-    if cid in mnx_ikey.get(kegg2mnx.get(cid, ""), ""):   # already has ikey group -> skip name
-        pass
-    if v.get("n"):
-        by_name.setdefault((base(v["n"]), v.get("c", 0)), set()).add(cid)
+    if not v.get("n"):
+        continue
+    groups.setdefault((base(v["n"]), v.get("c", 0)), []).append(cid)
 
-# union: each compound's group = its ikey group ∪ its name group
-group_of = {}
-def union_groups(cids):
+aliases = {}
+n_multi = 0
+for (bn, carb), cids in groups.items():
+    if len(cids) < 2 or carb <= 0 or not bn:
+        continue
+    # split by molecular formula so only true same-compound variants merge
+    byf = {}
     for c in cids:
-        group_of.setdefault(c, set()).update(cids)
-for s in by_ikey.values():
-    if len(s) > 1: union_groups(s)
-for (bn, c), s in by_name.items():
-    if len(s) > 1 and c > 0: union_groups(s)
-# transitive closure (name+ikey overlaps)
-changed = True
-while changed:
-    changed = False
-    for c in list(group_of):
-        g = group_of[c]
-        merged = set(g)
-        for m in g:
-            merged |= group_of.get(m, {m})
-        if merged != g:
-            for m in merged: group_of[m] = merged
-            changed = True
-
-aliases = {c: sorted(g) for c, g in group_of.items() if len(g) > 1}
+        byf.setdefault(formula(c) or f"c{carb}", []).append(c)
+    for f, members in byf.items():
+        if len(members) > 1:
+            n_multi += 1
+            for c in members:
+                aliases[c] = sorted(members)
 json.dump(aliases, open(f"{OUT}/aliases.json", "w"))
-n_groups = len({frozenset(g) for g in aliases.values()})
-print(f"[aliases] {len(aliases)} compounds in {n_groups} identity groups "
-      f"(InChIKey + name) -> aliases.json ({os.path.getsize(f'{OUT}/aliases.json')//1024} KB)")
-
-# --- SCAN: how many 'false-zero' compounds does this rescue? ---
-ko_producer = set()   # compounds with >=1 KO-annotated producing reaction
-for s, d, rid in net["edges"]:
-    if net["rxn"].get(rid, {}).get("k"):
-        ko_producer.add(d)
-rescued = 0
-examples = []
-for c, g in aliases.items():
-    if c not in ko_producer and any(m in ko_producer for m in g):
-        rescued += 1
-        if len(examples) < 10:
-            examples.append(f"{c}({C[c]['n'][:20]})")
-print(f"[scan] {rescued} compounds had NO KO-producing reaction of their own but a merged "
-      f"identity-partner does — these would return a FALSE 0 if searched alone, now fixed.")
-print("  examples:", ", ".join(examples))
-print("  acetoin group:", aliases.get("C00466"), "| butanediol:", aliases.get("C03044"),
-      "| L-lactate:", aliases.get("C00186"))
+print(f"[aliases] {len(aliases)} compounds in {n_multi} groups (base-name + formula) -> aliases.json "
+      f"({os.path.getsize(f'{OUT}/aliases.json')//1024} KB)")
+comp = {c: v["n"] for c, v in C.items()}
+for probe in ["C00031", "C00466", "C03044", "C00186"]:
+    print(f"  {probe} ({comp.get(probe)}):", [(c, comp.get(c)) for c in aliases.get(probe, [probe])])
