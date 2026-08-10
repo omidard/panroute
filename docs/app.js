@@ -225,11 +225,13 @@ function renderPathways(routes) {
   const encoded = G ? routes.filter(r => (G[r.id] || 0) > 0) : routes;
   const noneEncoded = G && encoded.length === 0;
   const useList = encoded.length ? encoded : routes;
-  // rank: well-characterised routes first (fewest obscure reactions), then shorter, then
-  // more widespread — so canonical pathways beat exotic carbon-skeleton shortcuts.
+  // rank: MOST GENOME-ENCODED first (the tool's whole premise — the canonical pathway is the
+  // one thousands of organisms actually carry), then fewest obscure reactions, then shorter.
+  // Length is a weak final tiebreak, NOT primary — that is what buried real long pathways.
   const list = [...useList].sort((a, b) =>
-    (a.repeats || 0) - (b.repeats || 0) || (a.uncur || 0) - (b.uncur || 0) || a.length - b.length ||
-    (G ? (G[b.id] || 0) - (G[a.id] || 0) : 0) || a.id - b.id);
+    (a.repeats || 0) - (b.repeats || 0) ||
+    (G ? (G[b.id] || 0) - (G[a.id] || 0) : 0) ||
+    (a.uncur || 0) - (b.uncur || 0) || a.length - b.length || a.id - b.id);
   if (noneEncoded) {
     $("#pwTitle").innerHTML = `Distinct pathways · <b>0</b> encoded by any KEGG genome
       <span class="hint">— ${routes.length} carbon-skeleton route(s) exist but no sequenced prokaryote encodes one within the ${ST.done ? ST.done.shortest : ""}-step search horizon. The native pathway may be longer than the search depth, or split across organisms. The skeleton routes are shown below for inspection.</span>`;
