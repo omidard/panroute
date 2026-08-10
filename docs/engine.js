@@ -102,8 +102,16 @@
           .forEach(v => stack.push([v, path.concat(v), new Set(onp).add(v)]));
       }
       const built = paths.map(p => this.buildRoute(p));
-      built.sort((a, b) => (a.repeats - b.repeats) || (a.uncur - b.uncur) || (a.length - b.length));
-      return built.slice(0, maxRoutes);
+      // A reaction that realises >1 step of a single linear route is a carbon-skeleton graph
+      // ARTIFACT — one RCLASS atom-mapping matched to two different metabolite transitions
+      // (e.g. glucose→6-acetyl-glucose→acetate both "via R00327"). A real pathway never reuses
+      // one reaction along a simple path, and no genome encodes these — drop them outright so
+      // the results are trustworthy (if that empties the set, the honest "can't trace this /
+      // FBA territory" state is shown instead of biochemical nonsense).
+      const clean = built.filter(r => r.repeats === 0);
+      const use = clean.length ? clean : [];
+      use.sort((a, b) => (a.uncur - b.uncur) || (a.length - b.length));
+      return use.slice(0, maxRoutes);
     }
 
     reactionsFor(u, v) {   // reactions realising step u->v (unique)
