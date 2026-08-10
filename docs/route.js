@@ -17,15 +17,29 @@ function dbLink(db, id) {
 const dgCls = dg => typeof dg === "number" ? (dg < -5 ? "fav" : dg > 5 ? "unfav" : "rev") : "rev";
 function primarySub(rid) { const s = (INFO[rid] || {}).subsystems || []; return s[0] || "Other / unassigned"; }
 
+let BUNDLE = null;
 async function main() {
   const raw = sessionStorage.getItem("panroute_route");
   if (!raw) { document.getElementById("rpt").innerHTML = "<p>No route selected. Open a pathway from the main page.</p>"; return; }
-  const D = JSON.parse(raw);
+  BUNDLE = JSON.parse(raw);
+  if (BUNDLE.route && !BUNDLE.routes) { BUNDLE.routes = [BUNDLE.route]; BUNDLE.current = BUNDLE.route.id; }  // legacy bundle
   [INFO, SMI] = await Promise.all([
     fetch("data/rxninfo.json").then(r => r.json()).catch(() => ({})),
     fetch("data/smiles.json").then(r => r.json()).catch(() => ({})),
   ]);
-  const r = D.route, q = D.query;
+  render(BUNDLE.current != null ? BUNDLE.current : (BUNDLE.routes[0] || {}).id);
+}
+
+function speciesFor(routeId) {
+  if (BUNDLE.orgs) return BUNDLE.orgs.filter(o => (o.route_idx || []).includes(routeId)).sort((a, b) => b.n_routes - a.n_routes);
+  return BUNDLE.species || [];   // legacy single-route bundle
+}
+
+function render(routeId) {
+  const routes = BUNDLE.routes, q = BUNDLE.query;
+  let idx = routes.findIndex(x => x.id === routeId); if (idx < 0) idx = 0;
+  const r = routes[idx]; BUNDLE.current = r.id;
+  const feasObj = (BUNDLE.feas && (BUNDLE.feas[r.id] || (BUNDLE.feas.feasible !== undefined ? BUNDLE.feas : null))) || null;
 
   // subsystem colour map for this route
   const subs = [...new Set(r.steps.map(s => primarySub(s.reactions[0].rid)))];
@@ -91,19 +105,30 @@ async function main() {
       <div class="xrefs">${xrefs.join("")}</div></div>`;
   }).join("")).join("");
 
-  // species
+  // species (filtered locally for this route)
+  const species = speciesFor(r.id);
   let spHtml;
-  if (D.genome_pending) spHtml = `<div class="pending">Species that encode this route appear once the genome data finishes deploying — reload the report.</div>`;
-  else if (!D.species || !D.species.length) spHtml = `<p style="color:var(--dim)">No KEGG genome encodes this exact route.</p>`;
-  else spHtml = `<p style="color:var(--dim);font-size:13px">${D.species.length} species encode this route</p>
-      <div class="splist">${D.species.slice(0, 300).map(o => `<div class="spitem">
+  if (BUNDLE.genome_pending) spHtml = `<div class="pending">Species that encode this route appear once the genome data finishes deploying — reload the report.</div>`;
+  else if (!species.length) spHtml = `<p style="color:var(--dim)">No KEGG genome encodes this exact route.</p>`;
+  else spHtml = `<p style="color:var(--dim);font-size:13px">${species.length} species encode this route</p>
+      <div class="splist">${species.slice(0, 300).map(o => `<div class="spitem">
         <span class="gdot" style="background:${GCOL[o.gram] || GCOL.Other}"></span><i>${o.species}</i>
         ${o.thermo_feasible ? '<span class="badge feas">ΔG✓</span>' : ''}</div>`).join("")}</div>`;
 
-  const feas = D.feas ? (D.feas.feasible ? `<span class="badge feas">ΔG feasible ${D.feas.dG_sum ?? ""} kJ/mol</span>`
-                                         : `<span class="badge infeas">ΔG infeasible</span>`) : "";
-  document.getElementById("rpt").innerHTML = `
-    <a class="rback" href="index.html">← back to search</a>
+  const feas = feasObj ? (feasObj.feasible ? `<span class="badge feas">ΔG feasible ${feasObj.dG_sum ?? ""} kJ/mol</span>`
+                                           : `<span class="badge infeas">ΔG infeasible</span>`) : "";
+  // navigation: back to the results view + move between ranked pathways without a round-trip
+  const total = routes.length;
+  const opts = routes.map((x, i) => `<option value="${x.id}"${x.id === r.id ? " selected" : ""}>#${i + 1} · ${x.length} steps · ${(BUNDLE.genomes && BUNDLE.genomes[x.id]) || 0} species</option>`).join("");
+  const nav = `<div class="rnav">
+      <a class="rback" href="#" id="toResults">← back to results</a>
+      <div class="rpager">
+        <button class="pgbtn" id="prevPw"${idx === 0 ? " disabled" : ""}>‹ prev</button>
+        <select id="pwSelect" class="pwselect" title="jump to a pathway">${opts}</select>
+        <button class="pgbtn" id="nextPw"${idx === total - 1 ? " disabled" : ""}>next ›</button>
+        <span class="rpos">pathway ${idx + 1} of ${total}</span>
+      </div></div>`;
+  document.getElementById("rpt").innerHTML = nav + `
     <div class="rtitle"><i>${q.end.name}</i> from ${q.start.name}</div>
     <div class="rmeta">${r.length} steps · ${r.steps.reduce((a, s) => a + s.reactions.length, 0)} reactions · spans ${subs.length} subsystem${subs.length > 1 ? "s" : ""} ${feas}</div>
     <div class="subchips">${subs.map(s => `<span class="subchip" style="border-color:${subColor[s]}44;color:${subColor[s]}">${s}</span>`).join("")}</div>
@@ -115,6 +140,19 @@ async function main() {
     <h2 class="sec">Species that encode this route</h2>
     ${spHtml}
     <p style="color:var(--dim);font-size:11.5px;margin-top:24px">Genome <i>potential</i>, not proof of production. KEGG / MetaNetX-derived · research use.</p>`;
+
+  // wire navigation
+  const go = id => { window.scrollTo(0, 0); render(id); };
+  document.getElementById("toResults").onclick = e => { e.preventDefault();
+    // history.back() returns to the exact results view (bfcache); app.js re-runs as a fallback
+    if (history.length > 1) history.back(); else location.href = "index.html"; };
+  const prev = document.getElementById("prevPw"), next = document.getElementById("nextPw");
+  if (prev) prev.onclick = () => { if (idx > 0) go(routes[idx - 1].id); };
+  if (next) next.onclick = () => { if (idx < total - 1) go(routes[idx + 1].id); };
+  document.getElementById("pwSelect").onchange = e => go(+e.target.value);
+  // keyboard: ← / → move between pathways
+  document.onkeydown = e => { if (e.key === "ArrowLeft" && idx > 0) go(routes[idx - 1].id);
+    else if (e.key === "ArrowRight" && idx < total - 1) go(routes[idx + 1].id); };
 
   // draw structures
   if (window.SmilesDrawer) {

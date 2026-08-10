@@ -11,17 +11,28 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const engine = new PanRoute();
 let GENOME_READY = false, CPD = [];
 fetch("data/ready.json").then(r => { if (r.ok) GENOME_READY = true; }).catch(() => {});
-fetch("data/compounds.json").then(r => r.json()).then(d => { CPD = Object.entries(d).map(([cid, name]) => ({ cid, name })); }).catch(() => {});
+fetch("data/compounds.json").then(r => r.json()).then(d => { CPD = Object.entries(d).map(([cid, name]) => ({ cid, name }));
+  document.dispatchEvent(new Event("cpd-ready")); }).catch(() => {});
 
 /* ---- autocomplete over bundled compound names ---- */
+// strip leading stereo/config descriptors so "glucose" matches "D-Glucose", "beta-D-Glucose"
+const STEREO = /^(\(?[0-9rsezn,+\-' ]+\)?-|d-|l-|dl-|alpha-|beta-|gamma-|delta-|meso-|cis-|trans-|sn-|o-|m-|p-|n-)+/i;
 function searchCpd(q) {
   q = q.trim().toLowerCase(); if (q.length < 2) return [];
   if (/^c\d{5}$/.test(q)) { const m = CPD.find(x => x.cid.toLowerCase() === q); return m ? [m] : []; }
-  const starts = [], has = [];
-  for (const x of CPD) { const n = x.name.toLowerCase();
-    if (n.startsWith(q)) starts.push(x); else if (n.includes(q)) has.push(x);
-    if (starts.length >= 12) break; }
-  return starts.concat(has).slice(0, 12);
+  const scored = [];
+  for (const x of CPD) {
+    const n = x.name.toLowerCase(), base = n.replace(STEREO, "");
+    let rank = -1;
+    if (n === q || base === q) rank = 0;                 // exact (ignoring D-/beta-/… prefix)
+    else if (base.startsWith(q) || n.startsWith(q)) rank = 1;   // starts with the query
+    else if (new RegExp(`[ (\\-,]${q}`).test(n)) rank = 2;      // query at a word boundary
+    else if (n.includes(q)) rank = 3;                    // anywhere
+    if (rank >= 0) scored.push({ x, rank, len: n.length });
+  }
+  // best rank first; within a rank the SHORTER name (the base metabolite, not a derivative)
+  scored.sort((a, b) => a.rank - b.rank || a.len - b.len);
+  return scored.slice(0, 12).map(s => s.x);
 }
 function wireAC(inputId, acId, cidId) {
   const inp = $(inputId), ac = $(acId), cid = $(cidId); let items = [], sel = -1; inp.dataset.cid = "";
@@ -64,7 +75,7 @@ $("#query").addEventListener("submit", e => { e.preventDefault();
 /* ---- run the live in-browser search ---- */
 async function runLive(start, end, feed) {
   RUNNING = true;
-  ST = { routes: [], byId: {}, feas: {}, orgs: [], ep: null };
+  ST = { routes: [], byId: {}, feas: {}, orgs: [], ep: null, query: { start, end, feed } };
   map.reset(true);
   $("#intro").classList.add("hidden"); $("#scrollcue").classList.add("hidden");
   $("#orglist").innerHTML = ""; $("#orgCount").textContent = "0"; $("#routeCount").textContent = "0"; $("#feasCount").textContent = "0";
@@ -244,19 +255,59 @@ function renderPathways(routes) {
         ${gb}${feas}<span class="pwopen">open report ↗</span></div>
       <div class="chain">${chain}</div><div class="rx">${rx}</div></div>`;
   }).join("");
+  window.PW_ORDER = list.map(r => r.id);          // ranked order for prev/next on the report page
   [...$("#pwList").children].forEach(el => el.onclick = () => openRoutePage(ST.byId[+el.dataset.id]));
 }
 
-/* store route context + open the dedicated report page in a new tab */
+/* store route context + open the dedicated report page IN THE SAME TAB, so history.back()
+   (and bfcache) return the user to the exact results view. A compact list of all ranked
+   pathways travels along so the report can offer prev/next navigation without a round-trip. */
 function openRoutePage(r) {
-  const species = ST.orgs.filter(o => (o.route_idx || []).includes(r.id))
-    .sort((a, b) => b.n_routes - a.n_routes);
+  const ranked = (window.PW_ORDER || ST.routes.map(x => x.id));
+  const routes = ranked.map(id => ST.byId[id]).filter(Boolean);   // full objects, ranked
+  const feas = {}; ranked.forEach(id => { if (ST.feas[id]) feas[id] = ST.feas[id]; });
+  const genomes = ST.routeGenomes || {};
+  // compact org list (species that encode ≥1 route) so the report can filter per pathway locally
+  const orgs = ST.orgs.map(o => ({ species: o.species, gram: o.gram, domain: o.domain,
+    n_routes: o.n_routes, feedstock: o.feedstock, route_idx: o.route_idx || [] }));
   sessionStorage.setItem("panroute_route", JSON.stringify({
-    route: r, query: { start: ST.ep.start, end: ST.ep.end },
-    feas: ST.feas[r.id] || null, species,
+    routes, feas, genomes, orgs, current: r.id,
+    query: { start: ST.ep.start, end: ST.ep.end },
     genome_pending: !!(ST.done && ST.done.genome_pending),
   }));
-  window.open("route.html", "_blank");
+  saveSession();                       // so Back restores results even if bfcache misses
+  sessionStorage.setItem("panroute_return", "1");
+  location.href = "route.html";
+}
+
+/* prefill the two inputs from stored compound ids (name looked up in the bundle) */
+function prefillFromCids(start, end, feed) {
+  const nm = cid => (CPD.find(x => x.cid === cid) || {}).name || cid;
+  [["#endInput", "#endCid", end], ["#startInput", "#startCid", start], ["#feedInput", "#feedCid", feed]]
+    .forEach(([iid, cidEl, c]) => { const el = $(iid);
+      el.value = c ? nm(c) : ""; el.dataset.cid = c || ""; $(cidEl).textContent = c || ""; });
+}
+
+/* restore the results view when the user comes BACK from the route report (or reloads).
+   bfcache usually restores the live DOM for free; this is the fallback when it doesn't. */
+window.addEventListener("pageshow", ev => {
+  if (ev.persisted) return;                       // bfcache already restored everything
+  const ret = sessionStorage.getItem("panroute_return");
+  const last = sessionStorage.getItem("panroute_last");
+  if (ret && last && !RUNNING) {
+    sessionStorage.removeItem("panroute_return");
+    const q = JSON.parse(last);
+    prefillFromCids(q.start, q.end, q.feed);
+    if (CPD.length) runLive(q.start, q.end, q.feed || "");
+    else document.addEventListener("cpd-ready", () => runLive(q.start, q.end, q.feed || ""), { once: true });
+  }
+});
+
+/* persist the active query so the results view can be rebuilt on return / reload */
+function saveSession() {
+  if (!ST.ep) return;
+  sessionStorage.setItem("panroute_last", JSON.stringify({
+    start: ST.ep.start.cid, end: ST.ep.end.cid, feed: (ST.query && ST.query.feed) || "" }));
 }
 
 /* ---- drawer ---- */
@@ -266,15 +317,18 @@ function openOrganism(o) {
   const routes = (o.route_idx || []).map(i => ST.byId[i]).filter(Boolean);
   $("#dbody").innerHTML =
     `<div style="color:var(--dim);font-size:12px;margin-bottom:10px">${GNAME[o.gram] || "—"} · ${o.domain} ·
-      encodes <b>${o.n_routes}</b> native route(s) · feedstock: <b>${o.feedstock}</b></div>` +
+      encodes <b>${o.n_routes}</b> native route(s) · feedstock: <b>${o.feedstock}</b>
+      <span class="hint">· click a route for its full report</span></div>` +
     (routes.map(routeBox).join("") || `<p class="hint">route detail unavailable</p>`);
+  [...$("#dbody").querySelectorAll(".routebox")].forEach(el =>
+    el.onclick = () => { const rr = ST.byId[+el.dataset.id]; if (rr) openRoutePage(rr); });
 }
 function routeBox(r) {
   const f = ST.feas[r.id];
   const feas = f ? (f.feasible ? `<span class="badge feas">ΔG feasible ${f.dG_sum ?? ""} kJ/mol</span>` : `<span class="badge infeas">ΔG infeasible</span>`) : "";
   const chain = r.path.map((p, i) => (i === 0 ? "" : `<span class="ar">→</span><span class="enz">${r.steps[i - 1].enzymes || "?"}</span><span class="ar">→</span>`) + `<span class="met">${p.name}</span>`).join(" ");
   const rxns = r.steps.map(s => s.reactions[0].rid).join(" · ");
-  return `<div class="routebox"><div class="rtop"><span>route · ${r.length} steps</span>${feas}</div>
+  return `<div class="routebox" data-id="${r.id}" style="cursor:pointer"><div class="rtop"><span>route · ${r.length} steps</span>${feas}<span class="pwopen">open report ↗</span></div>
     <div class="chain">${chain}</div><div class="rx" style="margin-top:6px">${rxns}</div></div>`;
 }
 function openTier(i, t) {
