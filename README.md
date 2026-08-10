@@ -118,12 +118,28 @@ restricted; the data layer is abstracted so KEGG can be swapped for MetaCyc/BiGG
 (complex subunit groups), `precompute_rxninfo`/`precompute_smiles`. Every correction is a
 script here, not an ad-hoc data patch, so a rebuild reproduces the corrected bundle.
 
+### How the search finds *real* pathways (not carbon-skeleton nonsense)
+
+Atom-conservation (RCLASS) admits huge fan-out — 58% of the graph's reactions are encoded by
+**zero** genomes, so a naive fewest-hops search finds absurd shortcuts (glucose→pyruvate "in
+3 steps" through a reaction no organism runs). Two mechanisms fix this at the method level:
+
+1. **Prevalence-weighted search.** Every edge is weighted by −log(genome prevalence of its
+   best reaction), and routes are found by lowest-weight (Dijkstra/k-shortest) rather than
+   fewest hops. A true 10-step glycolysis (all high-prevalence reactions) is cheaper than any
+   short path through a rare reaction, so real metabolism surfaces first. `bin/precompute_rxnprev.py`.
+2. **Co-occurrence gating.** A reaction's KOs are ORed (isozymes) unless its EC groups are
+   *co-inherited* across genomes (AND/OR ratio ≥ 0.5 = a genuine obligate complex, e.g.
+   pyruvate dehydrogenase E1∧E2∧E3). This stops isozymes (hexokinase vs glucokinase) from
+   being wrongly required together, which had gated all of central metabolism to ~0.
+   `bin/precompute_rxnko.py`.
+
+glucose→pyruvate now returns glycolysis encoded by ~6,000 species; glucose→ethanol/lactate work too.
+
 ### Known limitations (honest caveats)
 
-- **Distant pairs are FBA territory.** Bounded retrosynthetic search (default ≤6 steps) will
-  not find a native long pathway (e.g. glucose→pyruvate is ~10-step glycolysis). When no
-  genome encodes a route *within the horizon*, the UI says so explicitly rather than implying
-  the conversion is impossible or "engineered only."
+- **Bounded depth.** The search horizon defaults to ~13 steps; a native pathway longer than
+  that, or one split across organisms, won't be found as a single genome-encoded route.
 - **~2,000 reactions are uncreditable to genomes.** KEGG annotates some reactions only with
   eukaryote-specific KOs (e.g. K00001/K00006 list only insects/human); bacteria use different
   KOs for the same EC. Where a reaction carries *only* such KOs, no prokaryote is credited.

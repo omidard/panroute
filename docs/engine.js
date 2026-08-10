@@ -9,6 +9,19 @@
 
   const REV_MARGIN = 30;   // kJ/mol reversibility window (when ΔG available)
 
+  // binary min-heap keyed by `.w` (best-first search over weighted partial paths)
+  class MinHeap {
+    constructor() { this.a = []; }
+    size() { return this.a.length; }
+    push(x) { const a = this.a; a.push(x); let i = a.length - 1;
+      while (i > 0) { const p = (i - 1) >> 1; if (a[p].w <= a[i].w) break; [a[p], a[i]] = [a[i], a[p]]; i = p; } }
+    pop() { const a = this.a, top = a[0], last = a.pop();
+      if (a.length) { a[0] = last; let i = 0; const n = a.length;
+        for (;;) { let l = 2 * i + 1, r = l + 1, m = i;
+          if (l < n && a[l].w < a[m].w) m = l; if (r < n && a[r].w < a[m].w) m = r;
+          if (m === i) break; [a[m], a[i]] = [a[i], a[m]]; i = m; } }
+      return top; } }
+
   class PanRoute {
     constructor(opts) {
       opts = opts || {};
@@ -52,6 +65,8 @@
       }
       const CN = c => this.canon[c] || c;
 
+      this.prev = await this.loader(this.base + "rxnprev.json").catch(() => ({})); // reaction genome prevalence
+
       // adjacency (over canonical nodes)
       this.out = {}; this.inn = {};
       for (const [s, d, rid] of this.net.edges) {
@@ -59,6 +74,32 @@
         if (cs === cd) continue;                       // self-loop introduced by the merge
         (this.out[cs] = this.out[cs] || []).push([cd, rid]);
         (this.inn[cd] = this.inn[cd] || []).push([cs, rid]);
+      }
+
+      // ---- biological-plausibility edge WEIGHTS ----
+      // Atom-conservation (RCLASS) admits carbon-skeleton edges that no organism runs (58% of
+      // reactions are encoded by ZERO genomes). Hop-count search then finds absurd shortcuts.
+      // Weight each edge by -log(genome prevalence of its BEST realising reaction): a real
+      // 10-step pathway (all high-prevalence reactions) is cheaper than a 3-step path through
+      // a rare one, so lowest-weight search recovers true metabolism instead of nonsense.
+      const NGEN = this.net.n_genomes || 10513;
+      this.NGEN = NGEN;
+      const bestPrev = {};                             // "cs>cd" -> max reaction prevalence
+      for (const [s, d, rid] of this.net.edges) {
+        const cs = CN(s), cd = CN(d); if (cs === cd) continue;
+        const key = cs + ">" + cd, p = this.prev[rid] || 0;
+        if (bestPrev[key] === undefined || p > bestPrev[key]) bestPrev[key] = p;
+      }
+      this.outW = {};                                  // cs -> [[cd, weight], ...] (deduped)
+      const STEP = 0.15;                               // small per-hop cost: breaks plausibility ties toward shorter
+      for (const cs in this.out) {
+        const seen = new Set(), arr = [];
+        for (const [cd] of this.out[cs]) {
+          if (seen.has(cd)) continue; seen.add(cd);
+          const p = bestPrev[cs + ">" + cd] || 0;
+          arr.push([cd, -Math.log((p + 1) / (NGEN + 1)) + STEP]);
+        }
+        this.outW[cs] = arr;
       }
     }
 
@@ -81,25 +122,30 @@
       const dist = this.revDist(endSet);
       const starts = [...startSet].filter(s => (s in dist) && dist[s] <= maxLen);
       if (!starts.length) return [];
-      // Enumerate a LARGE candidate pool (not just maxRoutes), then rank by QUALITY so
-      // canonical routes (no reaction-reuse, well-characterised, short) survive instead of
-      // being crowded out of a small length-only cap by exotic carbon-skeleton shortcuts.
-      const ENUM = Math.max(maxRoutes * 8, 600);
-      const paths = []; let exp = 0;
-      const stack = starts.map(s => [s, [s], new Set([s])]);
-      while (stack.length && paths.length < ENUM && exp < 800000) {
-        const [node, path, onp] = stack.pop();
-        if (endSet.has(node) && path.length > 1) { paths.push(path); continue; }
-        const rem = maxLen - (path.length - 1); if (rem <= 0) continue;
-        const nxt = new Set();
-        for (const [v] of (this.out[node] || [])) {
-          if (onp.has(v)) continue;
-          const dv = dist[v]; if (dv === undefined || dv > rem - 1) continue;
-          nxt.add(v);
+      // Weighted k-shortest-SIMPLE-paths (Dijkstra-style best-first). A min-heap always expands
+      // the lowest-weight partial path, so complete routes emerge in ~increasing biological
+      // IMPLAUSIBILITY: a true pathway made of high-prevalence reactions is popped long before
+      // any shortcut through a rare/zero-genome reaction. Hop distance still prunes dead ends.
+      const heap = new MinHeap();
+      for (const s of starts) heap.push({ w: 0, node: s, path: [s], onp: new Set([s]) });
+      const paths = [], seen = new Set();
+      const POOL = Math.max(maxRoutes, 60);
+      let pops = 0; const POP_CAP = 200000, HEAP_CAP = 400000;
+      while (heap.size() && paths.length < POOL && pops < POP_CAP) {
+        const cur = heap.pop(); pops++;
+        if (endSet.has(cur.node) && cur.path.length > 1) {
+          const sig = cur.path.join(","); if (!seen.has(sig)) { seen.add(sig); paths.push(cur.path); }
+          continue;
         }
-        exp++;
-        [...nxt].sort((a, b) => ((b in dist) ? dist[b] : 1e9) - ((a in dist) ? dist[a] : 1e9))
-          .forEach(v => stack.push([v, path.concat(v), new Set(onp).add(v)]));
+        const rem = maxLen - (cur.path.length - 1); if (rem <= 0) continue;
+        const nbrs = this.outW[cur.node]; if (!nbrs) continue;
+        for (const [v, w] of nbrs) {
+          if (cur.onp.has(v)) continue;
+          const dv = dist[v]; if (dv === undefined || dv > rem - 1) continue;
+          if (heap.size() >= HEAP_CAP) break;
+          const onp = new Set(cur.onp); onp.add(v);
+          heap.push({ w: cur.w + w, node: v, path: cur.path.concat(v), onp });
+        }
       }
       const built = paths.map(p => this.buildRoute(p));
       // A reaction that realises >1 step of a single linear route is a carbon-skeleton graph
@@ -108,10 +154,11 @@
       // one reaction along a simple path, and no genome encodes these — drop them outright so
       // the results are trustworthy (if that empties the set, the honest "can't trace this /
       // FBA territory" state is shown instead of biochemical nonsense).
+      // `built` is already in ascending-weight (descending-plausibility) order from the heap —
+      // do NOT re-sort by length, which is what buried real pathways before. Just drop the
+      // reaction-reuse artifacts and keep the most plausible routes.
       const clean = built.filter(r => r.repeats === 0);
-      const use = clean.length ? clean : [];
-      use.sort((a, b) => (a.uncur - b.uncur) || (a.length - b.length));
-      return use.slice(0, maxRoutes);
+      return clean.slice(0, maxRoutes);
     }
 
     reactionsFor(u, v) {   // reactions realising step u->v (unique)

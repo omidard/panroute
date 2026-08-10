@@ -82,7 +82,7 @@ async function runLive(start, end, feed) {
   $("#results").classList.add("hidden"); $("#drawer").classList.add("hidden");
   $("#runBtn").disabled = true; $("#mapstatus").classList.remove("hidden"); $("#mapstatus").textContent = "searching…";
   try {
-    await engine.run(start, end, feed || null, (t, d) => handleEvent(t, d), { skipGating: !GENOME_READY, maxLen: 7, maxRoutes: 80 });
+    await engine.run(start, end, feed || null, (t, d) => handleEvent(t, d), { skipGating: !GENOME_READY, maxLen: 13, maxRoutes: 60 });
   } catch (err) { $("#phase").textContent = "✕ " + (err.message || err); console.error(err); }
   RUNNING = false; $("#runBtn").disabled = false;
 }
@@ -232,7 +232,7 @@ function renderPathways(routes) {
     (G ? (G[b.id] || 0) - (G[a.id] || 0) : 0) || a.id - b.id);
   if (noneEncoded) {
     $("#pwTitle").innerHTML = `Distinct pathways · <b>0</b> encoded by any KEGG genome
-      <span class="hint">— ${routes.length} carbon-skeleton route(s) exist but no sequenced prokaryote encodes one within the ${ST.done ? ST.done.shortest : ""}-step search horizon. The native pathway may be longer than a bioconversion step-count (e.g. glucose→pyruvate is ~10-step glycolysis). The skeleton routes are shown below for inspection.</span>`;
+      <span class="hint">— ${routes.length} carbon-skeleton route(s) exist but no sequenced prokaryote encodes one within the ${ST.done ? ST.done.shortest : ""}-step search horizon. The native pathway may be longer than the search depth, or split across organisms. The skeleton routes are shown below for inspection.</span>`;
   } else {
     const hidden = G ? routes.length - encoded.length : 0;
     const note = G
