@@ -46,6 +46,7 @@
       this.rxnko = await this.loader(this.base + "rxnko.json").catch(() => ({}));    // multi-EC complex KO groups
       this.sides = await this.loader(this.base + "rxnsides.json").catch(() => ({})); // L/R sides for signed ΔG
       this.dgSuspect = new Set(await this.loader(this.base + "thermo_suspect.json").catch(() => [])); // |ΔG|>200 = unbalanced artifact
+      this.excluded = await this.loader(this.base + "excluded.json").catch(() => ({}));   // currency/C1-sink metabolites + why
 
       // ---- collapse synonym compound IDs to one canonical node, IN THE GRAPH ----
       // KEGG fragments a metabolite across several compound IDs (e.g. 2-acetolactate C00900 /
@@ -262,8 +263,19 @@
         end: { cid: end, name: this.cname(end), xy: this.xy(end) }, map: this.layout.image });
       // synonym IDs are already merged in the graph (this.canon); search canonical endpoints
       const startC = this.cn(start), endC = this.cn(end);
+      // if an endpoint isn't in the carbon-skeleton network, say WHY (usually an excluded
+      // currency / C1-sink metabolite like CO2) instead of a bare "no route".
+      const inGraph = c => !!(this.out[c] || this.inn[c]);
+      for (const [role, c, raw] of [["start (feedstock)", startC, start], ["product", endC, end]]) {
+        if (inGraph(c)) continue;
+        const ex = this.excluded[c] || this.excluded[raw];
+        emit("done", { excluded: true, error: ex
+          ? `${this.cname(raw)} can't be used as the ${role}. ${ex.why}`
+          : `${this.cname(raw)} is not in the carbon-skeleton network — no atom-conserved (RCLASS) reactions connect it, so it can't start or end a route.` });
+        return;
+      }
       const routes = this.enumerate(new Set([startC]), new Set([endC]), maxLen, maxRoutes);
-      if (!routes.length) { emit("done", { error: `no route from ${this.cname(start)} to ${this.cname(end)}` }); return; }
+      if (!routes.length) { emit("done", { error: `No genome-independent carbon-skeleton route from ${this.cname(start)} to ${this.cname(end)} within ${maxLen} steps. They may be too far apart, or the conversion needs C–C cleavage/condensation the method can't trace.` }); return; }
       routes.forEach((r, i) => { r.id = i; r.map = this.resolveRoute(r); });
       const shortest = routes.reduce((a, b) => b.length < a.length ? b : a, routes[0]);
       // animate shortest, retro order

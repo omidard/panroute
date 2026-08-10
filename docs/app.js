@@ -103,7 +103,13 @@ function handleEvent(event, data) {
   else if (event === "route_genomes") { ST.routeGenomes = data; }
   else if (event === "organism") { addOrganism(data); }
   else if (event === "done") { ST.done = data;
-    if (data.error) { $("#phase").textContent = "✕ " + data.error; $("#mapstatus").textContent = data.error; return; }
+    if (data.error) { $("#phase").textContent = data.excluded ? "✕ endpoint not usable" : "✕ no route";
+      $("#mapstatus").classList.add("hidden");
+      const intro = $("#intro"); intro.classList.remove("hidden");
+      intro.innerHTML = `<div class="noroute"><div class="nr-ic">${data.excluded ? "⚠" : "∅"}</div>
+        <div class="nr-msg">${data.error}</div>
+        <div class="nr-hint">Every query runs live over the whole KEGG carbon-skeleton network — nothing here is precomputed.</div></div>`;
+      return; }
     if (data.genome_pending) { $("#phase").textContent = "✓ routes found — organism results pending (genome data uploading)";
       $("#pbar").style.width = "100%"; $("#mapstatus").textContent = `${data.n_routes} routes found`; renderPathwaysOnly(); return; }
     $("#phase").textContent = "✓ complete"; $("#pbar").style.width = "100%";
