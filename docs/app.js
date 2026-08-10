@@ -13,6 +13,8 @@ let GENOME_READY = false, CPD = [];
 fetch("data/ready.json").then(r => { if (r.ok) GENOME_READY = true; }).catch(() => {});
 fetch("data/compounds.json").then(r => r.json()).then(d => { CPD = Object.entries(d).map(([cid, name]) => ({ cid, name }));
   document.dispatchEvent(new Event("cpd-ready")); }).catch(() => {});
+let TRAITS = {};
+fetch("data/traits.json").then(r => r.json()).then(d => { TRAITS = d; }).catch(() => {});
 
 /* ---- autocomplete over bundled compound names ---- */
 // strip leading stereo/config descriptors so "glucose" matches "D-Glucose", "beta-D-Glucose"
@@ -189,32 +191,71 @@ function statCard(n, label, sub, c) {
   return `<div class="statcard glass" style="--c:${c}"><div class="sc-num">${(+n).toLocaleString()}</div>
     <div class="sc-lab">${label}</div><div class="sc-sub">${sub}</div></div>`;
 }
-function renderCatalog(filter) {
-  const rows = ST.orgs.filter(o => o.species.toLowerCase().includes(filter))
-    .sort((a, b) => b.n_routes - a.n_routes).slice(0, 400);
-  const header = `<div class="cat-row cat-hd">
-    <span class="c-sp">species (${rows.length})</span>
-    <span class="c-badges">Gram · ΔG · feed</span>
-    <span class="c-strip">routes by length →</span></div>`;
-  $("#catalog").innerHTML = header + rows.map(o => {
-    const set = new Set(o.route_idx || []);
-    const strip = COLS.map(r => {
-      const has = set.has(r.id);
+/* trait → [short label, colour] */
+const OXLAB = { aerobe: ["aerobe", "#ff8a3a"], facultative: ["facultative", "#d0a72a"],
+  microaerophile: ["microaerophile", "#39c0ff"], anaerobe: ["anaerobe", "#8a6cff"] };
+const TEMPLAB = { psychrophile: ["psychrophile", "#4defff"], mesophile: ["mesophile", "#22d18c"],
+  thermophile: ["thermophile", "#ff7a3a"], hyperthermophile: ["hyperthermophile", "#ff4d4d"] };
+const SAFELAB = { "GRAS/QPS": ["GRAS / QPS", "#22d18c"], opportunist: ["opportunist", "#ffb020"],
+  pathogen: ["pathogen", "#ff4d4d"] };
+function chip(pair) { return pair ? `<span class="tchip" style="color:${pair[1]};border-color:${pair[1]}44">${pair[0]}</span>` : `<span class="tchip tna">—</span>`; }
+let CAT_FILTER = "", CAT_TRAIT = "";
+
+function speciesRouteRows(o) {
+  // the routes this species encodes, best (most-encoded, feasible, shortest) first
+  const G = ST.routeGenomes || {};
+  const routes = (o.route_idx || []).map(i => ST.byId[i]).filter(Boolean)
+    .sort((a, b) => (G[b.id] || 0) - (G[a.id] || 0) || a.length - b.length);
+  return `<div class="sp-routes"><div class="sp-routes-h">${routes.length} route${routes.length > 1 ? "s" : ""} to make ${ST.ep.end.name} — click one for its full report</div>` +
+    routes.map((r, i) => {
       const f = ST.feas[r.id];
-      const col = !has ? "transparent" : (f ? (f.feasible ? "var(--green)" : "var(--red)") : "var(--blue)");
-      return `<span class="cell${has ? " on" : ""}" title="route ${r.length} steps${has ? "" : " — not encoded"}"
-        style="background:${col}"></span>`;
-    }).join("");
-    return `<div class="cat-row" data-i="${ST.orgs.indexOf(o)}">
-      <span class="c-sp"><span class="gdot" style="background:${GCOL[o.gram] || GCOL.Other}"></span><i>${o.species}</i></span>
-      <span class="c-badges"><span class="badge routes">${o.n_routes}×</span>
-        ${o.thermo_feasible ? '<span class="badge feas">✓</span>' : '<span class="badge infeas">✕</span>'}
-        ${o.feedstock === "overflow_capable" ? '<span class="badge infeas" title="overflow only">ov</span>' :
-          o.feedstock === "uptake" ? '<span class="badge feas" title="feedstock uptake">up</span>' : ''}</span>
-      <span class="c-strip">${strip}</span></div>`;
+      const feas = f ? (f.feasible ? `<span class="badge feas">ΔG feasible ${f.dG_sum ?? ""}</span>` : `<span class="badge infeas">ΔG infeasible</span>`) : "";
+      const chain = r.path.map((p, k) => (k ? `<span class="ar">→</span>` : "") + `<span class="met">${p.name}</span>`).join(" ");
+      return `<div class="sp-route" data-id="${r.id}">
+        <span class="sr-meta"><b>#${i + 1}</b> · ${r.length} steps ${feas}<span class="pwopen">open ↗</span></span>
+        <div class="chain">${chain}</div></div>`;
+    }).join("") + `</div>`;
+}
+
+function renderCatalog(filter) {
+  CAT_FILTER = filter != null ? filter : CAT_FILTER;
+  const tr = o => TRAITS[o.species] || {};
+  const match = o => o.species.toLowerCase().includes(CAT_FILTER) && (!CAT_TRAIT ||
+    tr(o).ox === CAT_TRAIT || tr(o).temp === CAT_TRAIT || tr(o).safety === CAT_TRAIT || o.gram === CAT_TRAIT);
+  const rows = ST.orgs.filter(match).sort((a, b) => b.n_routes - a.n_routes).slice(0, 500);
+  const GRAMLAB = { Gpos: "Gram +", Gneg: "Gram −", Arch: "Archaeon", Other: "—" };
+  // quick trait filters
+  const chips = [["", "all"], ["Gpos", "Gram +"], ["Gneg", "Gram −"], ["anaerobe", "anaerobe"],
+    ["aerobe", "aerobe"], ["facultative", "facultative"], ["thermophile", "thermophile"],
+    ["GRAS/QPS", "GRAS / QPS"], ["pathogen", "pathogen"], ["opportunist", "opportunist"]];
+  const filterBar = `<div class="catfilters">${chips.map(([v, l]) =>
+    `<button class="fchip${CAT_TRAIT === v ? " on" : ""}" data-tr="${v}">${l}</button>`).join("")}</div>`;
+  const header = `<div class="sp-hd">
+    <span>species that make ${ST.ep.end.name} (${rows.length})</span><span>routes</span>
+    <span>Gram</span><span>oxygen</span><span>temperature</span><span>safety</span><span>ΔG</span></div>`;
+  $("#catalog").innerHTML = filterBar + header + rows.map(o => {
+    const t = tr(o);
+    return `<div class="sp-wrap"><div class="sp-row" data-i="${ST.orgs.indexOf(o)}">
+      <span class="c-sp"><span class="caret">▸</span><span class="gdot" style="background:${GCOL[o.gram] || GCOL.Other}"></span><i>${o.species}</i></span>
+      <span class="c-n"><span class="badge routes">${o.n_routes}×</span></span>
+      <span>${chip([GRAMLAB[o.gram] || "—", GCOL[o.gram] || GCOL.Other])}</span>
+      <span>${chip(OXLAB[t.ox])}</span>
+      <span>${chip(TEMPLAB[t.temp])}</span>
+      <span>${chip(SAFELAB[t.safety])}</span>
+      <span>${o.thermo_feasible ? '<span class="badge feas">✓</span>' : '<span class="badge infeas">✕</span>'}</span>
+    </div></div>`;
   }).join("");
-  [...$("#catalog").querySelectorAll(".cat-row:not(.cat-hd)")].forEach(r =>
-    r.onclick = () => openOrganism(ST.orgs[+r.dataset.i]));
+  // expand a species inline to list its routes; nested route → full report
+  [...$("#catalog").querySelectorAll(".sp-row")].forEach(row => row.onclick = () => {
+    const wrap = row.parentElement, open = wrap.classList.toggle("open");
+    row.querySelector(".caret").textContent = open ? "▾" : "▸";
+    let panel = wrap.querySelector(".sp-routes");
+    if (open && !panel) { wrap.insertAdjacentHTML("beforeend", speciesRouteRows(ST.orgs[+row.dataset.i]));
+      [...wrap.querySelectorAll(".sp-route")].forEach(sr => sr.onclick = e => { e.stopPropagation();
+        const rr = ST.byId[+sr.dataset.id]; if (rr) openRoutePage(rr); }); }
+    else if (!open && panel) panel.remove();
+  });
+  [...$("#catalog").querySelectorAll(".fchip")].forEach(b => b.onclick = () => { CAT_TRAIT = b.dataset.tr; renderCatalog(); });
 }
 
 /* ---- distinct pathways: ranked by length, click opens a full detail PAGE ---- */
