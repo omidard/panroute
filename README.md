@@ -11,7 +11,7 @@ genomes in KEGG *encode* a complete route.
 
 ## Why it's different from a naive KEGG survey
 
-- **Real retrosynthetic search** (not hand-written pathways): reverse traversal from the
+- **Real retrosynthetic search**: reverse traversal from the
   product back to the feedstock over the whole KEGG reaction network.
 - **Carbon-skeleton graph**: edges come only from KEGG **RCLASS** atom-conserved pairs,
   with currency metabolites (ATP/NAD(P)(H)/CoA/CO₂/…) excluded — so the search cannot
