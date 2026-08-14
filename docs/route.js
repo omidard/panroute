@@ -114,7 +114,7 @@ function render(routeId) {
       ${x.eq ? `<div class="rxeq">${x.eq}</div>` : ""}
       <div class="dirtable">${rows.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join("")}</div>
       <div class="xrefs">${xrefs.join("")}</div>
-      <div class="enzrow"><button class="enzbtn${heteroIdx.has(i) ? " het" : ""}" data-rid="${rx.rid}" data-ko="${(rx.kos || []).join(",")}" data-sub="${st.from}" data-subname="${((r.path.find(p => p.cid === st.from) || {}).name || "").replace(/"/g, "&quot;")}">⚗ predict enzyme kinetics &amp; thermostability</button><span class="enzann" id="enzann-${rx.rid}"></span></div>
+      <div class="enzrow"><button class="enzview${heteroIdx.has(i) ? " het" : ""}" data-rid="${rx.rid}" data-ko="${(rx.kos || []).join(",")}" data-sub="${st.from}" data-subname="${((r.path.find(p => p.cid === st.from) || {}).name || "").replace(/"/g, "&quot;")}">⚗ enzyme candidates</button><span class="enzann" id="enzann-${rx.rid}"></span></div>
       </div>`;
   }).join("")).join("");
 
@@ -166,6 +166,12 @@ function render(routeId) {
     ${het ? `<h2 class="sec">Heterologous expression plan</h2>${planHtml}` : ""}
     <h2 class="sec">Pathway map · modularised by subsystem${het ? " <span class='hint' style='font-weight:400'>· green = native to chassis · purple = clone</span>" : ""}</h2>
     ${modHtml}
+    <h2 class="sec">Enzyme engineering · variant kinetics &amp; thermostability</h2>
+    <div class="engzone">
+      <button id="enzAll">▶ Analyze all ${new Set(r.steps.flatMap(s => s.reactions.map(x => x.rid))).size} enzymes in this pathway</button>
+      <span class="hint">One pass over the whole pathway: every step's KEGG orthologues → cluster at 80% → kcat/Km (MPEK) + thermostability (TemStaPro). The models load once for all steps (far faster than per-enzyme), and each reaction's result caches. Then open any step's <b>enzyme candidates</b> for its 3D landscape + ranked variants.</span>
+      <div id="enzAllProg" class="el-prog"></div>
+    </div>
     <h2 class="sec">Reaction details · directionality across databases</h2>
     <p style="color:var(--dim);font-size:12.5px;margin:-6px 0 14px">Directionality as reported by each source (KEGG, Rhea, MetaCyc) plus our own component-contribution ΔrG′° where computed. Cross-refs via MetaNetX; not every reaction is mapped in every database.</p>
     ${rxDetail}
@@ -173,8 +179,10 @@ function render(routeId) {
     ${spHtml}
     <p style="color:var(--dim);font-size:11.5px;margin-top:24px">Genome <i>potential</i>, not proof of production. KEGG / MetaNetX-derived · research use.</p>`;
 
-  // wire the per-reaction enzyme-prediction buttons
-  [...document.querySelectorAll(".enzbtn")].forEach(b => b.onclick = () =>
+  // one button analyses every enzyme in the pathway; per-step links then view each result
+  const allBtn = document.getElementById("enzAll");
+  if (allBtn) allBtn.onclick = () => runPathwayEnzymes();
+  [...document.querySelectorAll(".enzview")].forEach(b => b.onclick = () =>
     openEnzymeLab(b.dataset.rid, { ko: b.dataset.ko, sub: b.dataset.sub, name: b.dataset.subname }));
 
   // wire navigation
@@ -227,43 +235,54 @@ async function openEnzymeLab(rid, opts) {
     EL_STATE = { rid, data, sortKey: "rank", sortDir: 1, selected: 0 };
     return renderEnzLab();
   }
-  // not cached -> offer an on-demand LIVE run (works when the page is served by the analysis
-  // backend; the static github.io site has no backend, so it falls back to a "run locally" note).
-  const koTxt = opts.ko || "";
+  // not cached -> direct the user to the ONE whole-pathway button (analysing per-enzyme reloads the
+  // gigabyte models every time; the pathway button computes them all in a single model-load).
   body.innerHTML = `<div class="el-empty"><div class="ee-ic">⚗</div>
-    <p><b>Not analysed yet — run it now.</b></p>
-    <p>This pulls every KEGG orthologue of this enzyme${koTxt ? ` (${koTxt})` : ""}, clusters them at 80% identity,
-    then runs <b>MPEK</b> (kcat / Km) and <b>TemStaPro</b> (thermostability) on each variant. The models are
-    gigabytes and run on the analysis server — a few minutes the first time, then cached so it's instant after.</p>
-    <button id="el-run" class="enzbtn" style="font-size:13px;padding:8px 16px">▶ Run live analysis</button>
-    <div id="el-prog" class="el-prog"></div>
-    <p class="hint" style="margin-top:14px">No backend? Serve the app live with <code>python -m server.app</code> (then open localhost:8000),
-    or precompute offline: <code>bin/enzyme_characterize.py --rid ${rid} --ko ${koTxt || "&lt;KO&gt;"} --sub-cid ${opts.sub || "&lt;substrate&gt;"}</code></p></div>`;
-  const btn = document.getElementById("el-run");
-  if (btn) btn.onclick = () => runLiveEnzyme(rid, opts);
+    <p><b>This enzyme hasn't been analysed yet.</b></p>
+    <p>Use <b>▶ Analyze all enzymes in this pathway</b> at the top of the report — one pass characterises
+    every step at once (kcat / Km via MPEK, thermostability via TemStaPro), which is much faster than
+    running enzymes one by one, and each reaction's result is cached. Then reopen this step for its 3D
+    landscape and ranked variant table.</p>
+    <button id="el-goall" class="enzview" style="font-size:13px;padding:8px 16px">▶ Analyze the whole pathway now</button>
+    <p class="hint" style="margin-top:14px">This runs on the analysis backend (<code>python -m server.app</code> → localhost:8000);
+    the static site shows results once they're computed.</p></div>`;
+  const gb = document.getElementById("el-goall");
+  if (gb) gb.onclick = () => { elClose(); const a = document.getElementById("enzAll"); if (a) { a.scrollIntoView({ block: "center" }); a.click(); } };
 }
 
-/* stream a live on-demand run from the backend (/api/enzyme, Server-Sent Events). */
-function runLiveEnzyme(rid, opts) {
-  const prog = document.getElementById("el-prog");
-  const btn = document.getElementById("el-run");
-  if (btn) { btn.disabled = true; btn.textContent = "running…"; }
+/* Analyse EVERY enzyme in the pathway in one backend pass (one MPEK + one TemStaPro model-load for all
+   steps), streaming progress. On completion each reaction has a cached bundle to open. */
+let ENZ_ALL_RUNNING = false;
+function runPathwayEnzymes() {
+  if (ENZ_ALL_RUNNING) return;
+  const steps = [...document.querySelectorAll(".enzview")].map(b => ({
+    rid: b.dataset.rid, ko: b.dataset.ko, sub_cid: b.dataset.sub, sub_name: b.dataset.subname }));
+  const uniq = []; const seen = new Set();
+  for (const s of steps) { if (s.rid && s.ko && !seen.has(s.rid)) { seen.add(s.rid); uniq.push(s); } }
+  const prog = document.getElementById("enzAllProg");
+  const btn = document.getElementById("enzAll");
   const log = (m, cls) => { if (prog) { const d = document.createElement("div"); d.className = "pl" + (cls ? " " + cls : ""); d.textContent = m; prog.appendChild(d); prog.scrollTop = prog.scrollHeight; } };
-  log("connecting to analysis server…");
-  const q = new URLSearchParams({ rid, ko: opts.ko || "", sub: opts.sub || "", name: opts.name || "", temps: "37" });
+  if (!uniq.length) { log("no reactions with a mapped enzyme (KO) to analyse.", "err"); return; }
+  ENZ_ALL_RUNNING = true; prog.innerHTML = "";
+  if (btn) { btn.disabled = true; btn.textContent = `analysing ${uniq.length} enzymes…`; }
+  log(`requesting analysis of ${uniq.length} enzymes across the pathway…`);
   let es, gotAny = false;
-  try { es = new EventSource(`api/enzyme?${q}`); } catch (e) { log("no analysis backend reachable.", "err"); return; }
+  const q = new URLSearchParams({ steps: JSON.stringify(uniq) });
+  try { es = new EventSource(`api/pathway_enzymes?${q}`); }
+  catch (e) { log("no analysis backend reachable.", "err"); ENZ_ALL_RUNNING = false; return; }
+  const finish = () => { ENZ_ALL_RUNNING = false; if (btn) { btn.disabled = false; btn.textContent = `▶ Analyze all ${uniq.length} enzymes in this pathway`; } };
   es.addEventListener("progress", e => { gotAny = true; try { log(JSON.parse(e.data).msg); } catch (x) {} });
-  es.addEventListener("done", e => { gotAny = true; es.close();
-    let data = null; try { data = JSON.parse(e.data); } catch (x) {}
-    if (data && data.variants && data.variants.length) { ENZCACHE[rid] = data;
-      EL_STATE = { rid, data, sortKey: "rank", sortDir: 1, selected: 0 }; renderEnzLab(); }
-    else log("analysis finished but returned no variants.", "err"); });
-  es.addEventListener("error", e => { let m = ""; try { m = JSON.parse(e.data).message; } catch (x) {} if (m) { log("error: " + m, "err"); es.close(); } });
+  es.addEventListener("done", e => { gotAny = true; es.close(); finish();
+    let d = {}; try { d = JSON.parse(e.data); } catch (x) {}
+    const rids = d.rids || [];
+    log(`✓ analysed ${rids.length}/${d.total || uniq.length} enzymes — open any step's “enzyme candidates”.`, "ok");
+    rids.forEach(rid => { const b = document.querySelector(`.enzview[data-rid="${rid}"]`); if (b) { b.classList.add("done"); b.textContent = "⚗ enzyme candidates ✓"; } });
+  });
+  es.addEventListener("error", e => { let m = ""; try { m = JSON.parse(e.data).message; } catch (x) {} if (m) { log("error: " + m, "err"); es.close(); finish(); } });
   es.onerror = () => { es.close();
     if (!gotAny) { log("could not reach the analysis backend (this static site has none).", "err");
-      log("run it live with:  python -m server.app   → open localhost:8000", "err");
-      if (btn) { btn.disabled = false; btn.textContent = "▶ Run live analysis"; } } };
+      log("run it live with:  python -m server.app   → open localhost:8000", "err"); }
+    finish(); };
 }
 
 function renderEnzLab() {

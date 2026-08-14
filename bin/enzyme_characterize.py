@@ -124,7 +124,7 @@ def species_of(gene, tax):
 
 
 def run_mmseqs(fasta, prefix):
-    tmp = os.path.join(WORK, "mm_tmp")
+    tmp = prefix + "_mmtmp"                       # per-prefix tmp so batch (repeated) calls don't collide
     os.makedirs(tmp, exist_ok=True)
     # 80% identity, coverage 0.5 (bidirectional) -> representative per near-identical cluster
     subprocess.run([MMSEQS, "easy-cluster", fasta, prefix, tmp,
@@ -161,121 +161,83 @@ def run_temstapro(fasta, out_tsv):
     return therm
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--rid", required=True)
-    ap.add_argument("--ko", required=True, help="comma-separated KO id(s)")
-    ap.add_argument("--sub-cid", default="", help="substrate KEGG compound id (for SMILES)")
-    ap.add_argument("--sub-smiles", default="")
-    ap.add_argument("--sub-name", default="")
-    ap.add_argument("--temps", default="37")
-    ap.add_argument("--max-genes", type=int, default=600)
-    ap.add_argument("--max-reps", type=int, default=120)
-    ap.add_argument("--stage", default="all", choices=["all", "fetch", "predict"])
-    args = ap.parse_args()
+def _f(x):
+    try:
+        v = float(x); return v if v == v else None
+    except (TypeError, ValueError):
+        return None
 
-    tax = load_json(os.path.join(DATA, "taxonomy.json"), {})
-    smiles_db = load_json(os.path.join(DATA, "smiles.json"), {})
-    smiles = args.sub_smiles or smiles_db.get(args.sub_cid, "")
-    temps = [int(x) for x in args.temps.split(",") if x.strip()]
-    kos = [k.strip() for k in args.ko.split(",") if k.strip()]
-    wpre = os.path.join(WORK, args.rid)
 
-    # ---- 1. gather variants (KEGG KO orthologues) ----
-    print(f"[{args.rid}] KO {kos} — gathering variants", flush=True)
+METHOD = {"cluster": "mmseqs easy-cluster --min-seq-id 0.8 -c 0.5",
+          "length_filter": ">=50% of longest",
+          "kinetics": "MPEK / MTLKcatKM (kcat 1/s, Km mM)",
+          "thermostability": "TemStaPro ProtT5-XL (P Tm > threshold)"}
+
+
+def gather_reps(kos, max_genes, max_reps, tax, tag):
+    """KEGG orthologues -> length-filter (>=50% longest) -> 80%-identity clusters -> representatives."""
     genes = []
     for ko in kos:
         genes += ko_genes(ko)
     genes = sorted(set(genes))
-    n_raw_genes = len(genes)
-    print(f"  {n_raw_genes} KO genes", flush=True)
-    if n_raw_genes > args.max_genes:
-        # deterministic subsample by hash so runs are reproducible (cluster still dedups)
-        genes = sorted(genes, key=lambda g: hashlib.sha1(g.encode()).hexdigest())[:args.max_genes]
-        print(f"  capped to {len(genes)} for sequence fetch", flush=True)
+    n_raw = len(genes)
+    print(f"  [{tag}] {n_raw} KO genes", flush=True)
+    if n_raw > max_genes:                              # deterministic subsample; clustering still dedups
+        genes = sorted(genes, key=lambda g: hashlib.sha1(g.encode()).hexdigest())[:max_genes]
     seqs = fetch_aaseq(genes)
-    print(f"  {len(seqs)} sequences fetched", flush=True)
+    print(f"  [{tag}] {len(seqs)} sequences fetched", flush=True)
     if not seqs:
-        print("  no sequences — abort"); return
-
-    # ---- 2. length filter (drop < 50% of the longest) ----
+        return [], {"n_ko_genes": n_raw, "n_sequences": 0, "n_after_length": 0, "n_clusters": 0}
     longest = max(len(s) for s in seqs.values())
     kept = {g: s for g, s in seqs.items() if len(s) >= 0.5 * longest}
-    print(f"  longest={longest} aa; {len(kept)}/{len(seqs)} pass the 50%-length filter", flush=True)
-
-    faa = wpre + "_all.faa"
+    faa = os.path.join(WORK, tag + "_all.faa")
     with open(faa, "w") as fh:
         for g, s in kept.items():
             fh.write(f">{g}\n{s}\n")
-
-    # ---- 3. cluster at 80% identity ----
-    clusters = run_mmseqs(faa, wpre)
-    print(f"  {len(clusters)} clusters at 80% identity", flush=True)
-    # representative = longest member; carry member organisms
+    clusters = run_mmseqs(faa, os.path.join(WORK, tag))
     reps = []
     for rep, members in clusters.items():
         best = max(members, key=lambda m: len(kept.get(m, "")))
         orgs = sorted({species_of(m, tax)[0] for m in members})
-        reps.append({"rep": best, "seq": kept[best], "members": members,
-                     "cluster_size": len(members), "organisms": orgs})
+        reps.append({"rep": best, "seq": kept[best], "cluster_size": len(members), "organisms": orgs})
     reps.sort(key=lambda r: -r["cluster_size"])
-    if len(reps) > args.max_reps:
-        reps = reps[:args.max_reps]
-        print(f"  keeping top {len(reps)} clusters by size", flush=True)
+    reps = reps[:max_reps]
+    print(f"  [{tag}] {len(clusters)} clusters at 80% id -> {len(reps)} representatives", flush=True)
+    return reps, {"n_ko_genes": n_raw, "n_sequences": len(seqs),
+                  "n_after_length": len(kept), "n_clusters": len(clusters)}
 
-    # stash intermediate so 'predict' stage can resume
-    interm = wpre + "_reps.json"
-    json.dump({"reps": reps, "n_raw_genes": n_raw_genes, "n_seqs": len(seqs),
-               "n_after_length": len(kept), "longest": longest}, open(interm, "w"))
-    if args.stage == "fetch":
-        print("  fetch stage done ->", interm); return
 
-    # ---- 4. kcat + Km (MPEK) ----
-    print(f"  MPEK kcat/Km on {len(reps)} variants x temps {temps}", flush=True)
-    mp_in = wpre + "_mpek_in.csv"
+def run_mpek(rows, workprefix):
+    """rows=[[id,seq,smiles,species,temp],...] -> {id: mpek_row}. One MPEK invocation (model loads once)."""
+    if not rows:
+        return {}
+    mp_in, mp_out = workprefix + "_mpek_in.csv", workprefix + "_mpek_out.csv"
     with open(mp_in, "w", newline="") as fh:
-        w = csv.writer(fh); w.writerow(["id", "sequence", "smiles", "species", "temp"])
-        for i, r in enumerate(reps):
-            sp = species_of(r["rep"], tax)[0]
-            for t in temps:
-                w.writerow([f"v{i}@{t}", r["seq"], smiles, sp, t])
-    mp_out = wpre + "_mpek_out.csv"
+        w = csv.writer(fh); w.writerow(["id", "sequence", "smiles", "species", "temp"]); w.writerows(rows)
+    subprocess.run([MPEK_SH, mp_in, mp_out], check=True)
     kin = {}
-    if smiles:
-        subprocess.run([MPEK_SH, mp_in, mp_out], check=True)
-        with open(mp_out) as fh:
-            for row in csv.DictReader(fh):
-                kin[row["id"]] = row
-    else:
-        print("  no substrate SMILES — skipping kinetics", flush=True)
+    with open(mp_out) as fh:
+        for row in csv.DictReader(fh):
+            kin[row["id"]] = row
+    return kin
 
-    # ---- 5. thermostability (TemStaPro) ----
-    print(f"  TemStaPro thermostability on {len(reps)} variants", flush=True)
-    rep_faa = wpre + "_reps.faa"
-    with open(rep_faa, "w") as fh:
-        for i, r in enumerate(reps):
-            fh.write(f">v{i}\n{r['seq']}\n")
-    therm = run_temstapro(rep_faa, wpre + "_therm.tsv")
 
-    # ---- 6. assemble + rank ----
+def assemble_variants(reps, kin, therm, temps, idp):
+    """reps + MPEK rows (id `<idp>_v<i>_<t>`) + TemStaPro (id `<idp>_v<i>`) -> ranked variant list."""
+    import math
     variants = []
     for i, r in enumerate(reps):
-        row37 = kin.get(f"v{i}@{temps[0]}", {})
-        kcat = _f(row37.get("kcat"))
-        km = _f(row37.get("km"))
+        base = f"{idp}_v{i}"
+        row0 = kin.get(f"{base}_{temps[0]}", {})
+        kcat, km = _f(row0.get("kcat")), _f(row0.get("km"))
         eff = (kcat / km) if (kcat and km) else None
-        tvals = {t: _f(kin.get(f"v{i}@{t}", {}).get("kcat")) for t in temps}
-        th = therm.get(f"v{i}", {})
-        variants.append({
-            "id": f"v{i}", "rep_gene": r["rep"], "organisms": r["organisms"],
-            "cluster_size": r["cluster_size"], "length": len(r["seq"]),
-            "kcat": kcat, "km": km, "kcat_km": eff,
-            "kcat_by_temp": tvals,
-            "thermo": th.get("curve", {}), "thermo_label": th.get("label", ""),
-            "sequence": r["seq"],
-        })
-    # rank best->worst: catalytic efficiency (log kcat/Km) + thermostability (P>55C)
-    import math
+        tvals = {t: _f(kin.get(f"{base}_{t}", {}).get("kcat")) for t in temps}
+        th = therm.get(base, {})
+        variants.append({"id": f"v{i}", "rep_gene": r["rep"], "organisms": r["organisms"],
+                         "cluster_size": r["cluster_size"], "length": len(r["seq"]),
+                         "kcat": kcat, "km": km, "kcat_km": eff, "kcat_by_temp": tvals,
+                         "thermo": th.get("curve", {}), "thermo_label": th.get("label", ""),
+                         "sequence": r["seq"]})
 
     def score(v):
         s = 0.0
@@ -287,33 +249,107 @@ def main():
         return s
     variants.sort(key=score, reverse=True)
     for rank, v in enumerate(variants):
-        v["rank"] = rank + 1
-        v["score"] = round(score(v), 3)
+        v["rank"] = rank + 1; v["score"] = round(score(v), 3)
+    return variants
 
-    out = {
-        "rid": args.rid, "ko": kos,
-        "substrate": {"cid": args.sub_cid, "name": args.sub_name, "smiles": smiles},
-        "temps": temps,
-        "n_ko_genes": n_raw_genes, "n_sequences": len(seqs),
-        "n_after_length_filter": len(kept), "n_clusters": len(clusters),
-        "n_variants": len(variants),
-        "method": {"cluster": "mmseqs easy-cluster --min-seq-id 0.8 -c 0.5",
-                   "length_filter": ">=50% of longest",
-                   "kinetics": "MPEK / MTLKcatKM (kcat 1/s, Km mM)",
-                   "thermostability": "TemStaPro ProtT5-XL (P Tm > threshold)"},
-        "variants": variants,
-    }
-    outp = os.path.join(OUTDIR, f"{args.rid}.json")
+
+def write_bundle(rid, kos, sub, temps, stats, variants):
+    out = {"rid": rid, "ko": kos, "substrate": sub, "temps": temps,
+           "n_ko_genes": stats["n_ko_genes"], "n_sequences": stats["n_sequences"],
+           "n_after_length_filter": stats["n_after_length"], "n_clusters": stats["n_clusters"],
+           "n_variants": len(variants), "method": METHOD, "variants": variants}
+    outp = os.path.join(OUTDIR, f"{rid}.json")
     json.dump(out, open(outp, "w"))
     print(f"  wrote {outp}: {len(variants)} ranked variants", flush=True)
+    return outp
 
 
-def _f(x):
-    try:
-        v = float(x)
-        return v if v == v else None
-    except (TypeError, ValueError):
-        return None
+def _smiles(sub_cid, sub_smiles, smiles_db):
+    return sub_smiles or smiles_db.get(sub_cid, "")
+
+
+def characterize_single(rid, kos, sub_cid, sub_name, sub_smiles, temps, max_genes, max_reps, tax, smiles_db):
+    smiles = _smiles(sub_cid, sub_smiles, smiles_db)
+    print(f"[{rid}] KO {kos} substrate {sub_name or sub_cid}", flush=True)
+    reps, stats = gather_reps(kos, max_genes, max_reps, tax, rid)
+    if not reps:
+        print("  no sequences — abort"); return None
+    rows = []
+    for i, r in enumerate(reps):
+        sp = species_of(r["rep"], tax)[0]
+        for t in temps:
+            rows.append([f"{rid}_v{i}_{t}", r["seq"], smiles, sp, t])
+    kin = run_mpek(rows, os.path.join(WORK, rid)) if smiles else {}
+    faa = os.path.join(WORK, rid + "_reps.faa")
+    with open(faa, "w") as fh:
+        for i, r in enumerate(reps):
+            fh.write(f">{rid}_v{i}\n{r['seq']}\n")
+    therm = run_temstapro(faa, os.path.join(WORK, rid + "_therm.tsv"))
+    variants = assemble_variants(reps, kin, therm, temps, rid)
+    return write_bundle(rid, kos, {"cid": sub_cid, "name": sub_name, "smiles": smiles}, temps, stats, variants)
+
+
+def characterize_batch(steps, temps, max_genes, max_reps, tax, smiles_db):
+    """Whole-pathway: gather+cluster every step, then ONE MPEK + ONE TemStaPro over ALL variants (each
+    gigabyte-scale model loads once instead of once-per-reaction), then split back to per-reaction bundles.
+    This is why the UI runs the whole pathway from a single button rather than per enzyme."""
+    print(f"[pathway] {len(steps)} reactions — one MPEK + one TemStaPro pass for the whole pathway", flush=True)
+    prepared, all_rows, faa_lines = [], [], []
+    for st in steps:
+        rid = st.get("rid", "")
+        kos = [k for k in (st.get("ko") or "").split(",") if k]
+        if not rid or not kos:
+            print(f"  [{rid or '?'}] no KO — skip"); continue
+        if os.path.exists(os.path.join(OUTDIR, f"{rid}.json")):
+            print(f"  [{rid}] already computed — skip"); continue
+        smiles = _smiles(st.get("sub_cid", ""), "", smiles_db)
+        reps, stats = gather_reps(kos, max_genes, max_reps, tax, rid)
+        if not reps:
+            print(f"  [{rid}] no sequences — skip"); continue
+        for i, r in enumerate(reps):
+            sp = species_of(r["rep"], tax)[0]
+            faa_lines.append(f">{rid}_v{i}\n{r['seq']}\n")
+            if smiles:
+                for t in temps:
+                    all_rows.append([f"{rid}_v{i}_{t}", r["seq"], smiles, sp, t])
+        prepared.append({"rid": rid, "kos": kos, "reps": reps, "stats": stats,
+                         "sub": {"cid": st.get("sub_cid", ""), "name": st.get("sub_name", ""), "smiles": smiles}})
+    if not prepared:
+        print("[pathway] nothing to characterize (all cached or no KOs)"); return []
+    print(f"[pathway] MPEK on {len(all_rows)} rows across {len(prepared)} reactions (model loaded once)", flush=True)
+    kin = run_mpek(all_rows, os.path.join(WORK, "pathway"))
+    nvar = sum(len(p["reps"]) for p in prepared)
+    print(f"[pathway] TemStaPro on {nvar} variants across {len(prepared)} reactions (model loaded once)", flush=True)
+    faa = os.path.join(WORK, "pathway_reps.faa")
+    open(faa, "w").write("".join(faa_lines))
+    therm = run_temstapro(faa, os.path.join(WORK, "pathway_therm.tsv"))
+    written = []
+    for p in prepared:
+        variants = assemble_variants(p["reps"], kin, therm, temps, p["rid"])
+        written.append(write_bundle(p["rid"], p["kos"], p["sub"], temps, p["stats"], variants))
+    print(f"[pathway] done — {len(written)} reaction bundles written", flush=True)
+    return written
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--rid"); ap.add_argument("--ko", default="")
+    ap.add_argument("--sub-cid", default=""); ap.add_argument("--sub-smiles", default=""); ap.add_argument("--sub-name", default="")
+    ap.add_argument("--steps-json", default="", help="JSON file [{rid,ko,sub_cid,sub_name}] -> whole-pathway batch")
+    ap.add_argument("--temps", default="37")
+    ap.add_argument("--max-genes", type=int, default=600)
+    ap.add_argument("--max-reps", type=int, default=120)
+    ap.add_argument("--stage", default="all")          # accepted for back-compat, ignored
+    args = ap.parse_args()
+    tax = load_json(os.path.join(DATA, "taxonomy.json"), {})
+    smiles_db = load_json(os.path.join(DATA, "smiles.json"), {})
+    temps = [int(x) for x in args.temps.split(",") if x.strip()]
+    if args.steps_json:
+        characterize_batch(load_json(args.steps_json, []), temps, args.max_genes, args.max_reps, tax, smiles_db)
+    else:
+        kos = [k.strip() for k in args.ko.split(",") if k.strip()]
+        characterize_single(args.rid, kos, args.sub_cid, args.sub_name, args.sub_smiles,
+                            temps, args.max_genes, args.max_reps, tax, smiles_db)
 
 
 if __name__ == "__main__":

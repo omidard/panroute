@@ -411,3 +411,19 @@ html,body{height:auto;overflow-x:hidden}
 .el-prog:not(:empty){display:block}
 .el-prog .pl{color:var(--dim);line-height:1.5;white-space:pre-wrap}
 .el-prog .pl.err{color:var(--amber)}
+
+.engzone{background:linear-gradient(180deg,rgba(57,192,255,.06),transparent);border:1px solid var(--stroke);
+  border-radius:12px;padding:14px 16px;margin:2px 0 8px}
+#enzAll{background:linear-gradient(180deg,var(--blue),#1c56d6);border:0;color:#fff;font-weight:700;
+  padding:10px 18px;border-radius:10px;cursor:pointer;font-size:14px;box-shadow:0 4px 16px rgba(47,123,255,.35)}
+#enzAll:hover:not(:disabled){transform:translateY(-1px)}
+#enzAll:disabled{opacity:.6;cursor:default}
+.engzone .hint{display:block;margin-top:9px;line-height:1.5;max-width:860px}
+.engzone .hint b{color:var(--ink)}
+#enzAllProg{margin-top:12px}
+.enzview{background:rgba(57,192,255,.1);border:1px solid rgba(57,192,255,.35);color:var(--cyan);
+  border-radius:8px;padding:5px 11px;font-size:12px;font-weight:600;cursor:pointer}
+.enzview:hover{background:rgba(57,192,255,.2)}
+.enzview.het{background:rgba(176,124,255,.13);border-color:rgba(176,124,255,.45);color:var(--violet)}
+.enzview.done{border-color:var(--green);color:var(--green);background:rgba(34,209,140,.1)}
+.el-prog .pl.ok{color:var(--green)}

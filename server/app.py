@@ -22,7 +22,10 @@ from panroute.keggfetch import KeggClient
 PORT = int(os.environ.get("PANROUTE_PORT", "8000"))
 DOCS = os.path.join(ROOT, "docs")           # the current client (same tree deployed to github.io)
 ENZ_DIR = os.path.join(DOCS, "data", "enzymes")
+ENZ_WORK = os.path.join(ROOT, "cache", "enzyme_work")
 ENZ_PY = os.path.join(ROOT, "bin", "enzyme_characterize.py")
+os.makedirs(ENZ_WORK, exist_ok=True)
+_run_counter = [0]
 _enz_locks = {}                              # rid -> Lock (serialise concurrent runs of the same reaction)
 _enz_locks_guard = threading.Lock()
 MIME = {".html": "text/html", ".js": "text/javascript", ".css": "text/css",
@@ -89,6 +92,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._sse(qs)
         if path == "/api/enzyme":
             return self._sse_enzyme(qs)
+        if path == "/api/pathway_enzymes":
+            return self._sse_pathway(qs)
         if path == "/api/ping":                          # lets the client detect a live backend
             return self._send(200, "application/json", '{"live":true}', {"Access-Control-Allow-Origin": "*"})
 
@@ -171,21 +176,71 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if os.path.exists(outp):                  # produced while we waited
                     return emit("done", json.load(open(outp)))
-                emit("progress", {"msg": f"starting live analysis for {rid} (KO {ko}) — this runs the models once, then caches"})
+                emit("progress", {"msg": f"starting live analysis for {rid} (KO {ko}) — runs the models once, then caches"})
                 cmd = [sys.executable, ENZ_PY, "--rid", rid, "--ko", ko, "--sub-cid", sub,
-                       "--sub-name", name, "--temps", temps, "--max-genes", "150", "--max-reps", "40", "--stage", "all"]
-                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
-                for line in proc.stdout:
-                    line = line.rstrip()
-                    if line:
-                        emit("progress", {"msg": line})
-                proc.wait()
+                       "--sub-name", name, "--temps", temps, "--max-genes", "150", "--max-reps", "40"]
+                self._stream_pipeline(cmd, emit)
                 if os.path.exists(outp):
                     emit("done", json.load(open(outp)))
                 else:
                     emit("error", {"message": "analysis produced no result (no sequences, or a tool failed) — see server log"})
             finally:
                 lock.release()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            try: emit("error", {"message": str(e)})
+            except Exception: pass
+
+    def _stream_pipeline(self, cmd, emit):
+        """Run the pipeline subprocess, streaming stdout as progress events. If the client disconnects
+        (emit raises), TERMINATE the subprocess so a closed browser tab never leaves a 4.8GB MPEK run
+        orphaned (the leak the smoke-test hit)."""
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        try:
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line:
+                    emit("progress", {"msg": line})
+            proc.wait()
+        except (BrokenPipeError, ConnectionResetError):
+            try: proc.terminate()
+            except Exception: pass
+            raise
+
+    def _sse_pathway(self, qs):
+        """Whole-pathway: characterise EVERY reaction's enzyme in one run (one MPEK + one TemStaPro pass
+        for the whole pathway — the models load once, not once per step). Streams progress; on completion
+        each reaction has its own cached bundle. `steps` = url-encoded JSON [{rid,ko,sub_cid,sub_name}]."""
+        try:
+            steps = json.loads((qs.get("steps") or ["[]"])[0])
+        except Exception:
+            steps = []
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def emit(ev, data):
+            self.wfile.write(f"event: {ev}\ndata: {json.dumps(data)}\n\n".encode()); self.wfile.flush()
+
+        steps = [s for s in steps if re.fullmatch(r"[A-Za-z0-9]+", s.get("rid", "") or "")
+                 and re.fullmatch(r"[A-Za-z0-9,]+", s.get("ko", "") or "")]
+        if not steps:
+            return emit("error", {"message": "no valid reactions with a KO to analyse"})
+        rids = [s["rid"] for s in steps]
+        try:
+            _run_counter[0] += 1
+            stepf = os.path.join(ENZ_WORK, f"pathway_steps_{os.getpid()}_{_run_counter[0]}.json")
+            json.dump(steps, open(stepf, "w"))
+            emit("progress", {"msg": f"analysing {len(steps)} enzymes across the pathway — one model-load for all of them"})
+            cmd = [sys.executable, ENZ_PY, "--steps-json", stepf, "--temps", "37",
+                   "--max-genes", "150", "--max-reps", "40"]
+            self._stream_pipeline(cmd, emit)
+            done = [r for r in rids if os.path.exists(os.path.join(ENZ_DIR, f"{r}.json"))]
+            emit("done", {"rids": done, "total": len(rids)})
         except (BrokenPipeError, ConnectionResetError):
             return
         except Exception as e:
