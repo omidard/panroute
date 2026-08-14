@@ -120,10 +120,24 @@ def load_json(p, default):
         return default
 
 
+_ORGNAMES = {}
+def _load_orgnames():
+    global _ORGNAMES
+    if not _ORGNAMES:
+        p = os.path.join(DATA, "kegg_org_names.json")
+        if os.path.exists(p):
+            _ORGNAMES = json.load(open(p))
+    return _ORGNAMES
+
+
 def species_of(gene, tax):
     org = gene.split(":")[0]
     t = tax.get(org)
-    return (t[0] if t else org), org
+    if t:
+        return t[0], org
+    # orthologues can live in genomes outside our tracked set -> resolve the KEGG code to a species
+    # name from the bundled kegg_org_names map (so the UI never shows a bare code like "sgra").
+    return _load_orgnames().get(org, org), org
 
 
 def run_mmseqs(fasta, prefix):
