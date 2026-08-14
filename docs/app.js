@@ -57,6 +57,7 @@ function resolveInput(id) { const inp = $(id); if (inp.dataset.cid) return inp.d
 
 /* ---- example quick-picks (pinned to exact KEGG compound ids) ---- */
 const EXAMPLES = [
+  { p: ["riboflavin", "C00255"], s: ["chitosan", "C00734"], f: ["", ""] },
   { p: ["succinate", "C00042"], s: ["pyruvate", "C00022"], f: ["", ""] },
   { p: ["L-lactate", "C00186"], s: ["pyruvate", "C00022"], f: ["", ""] },
   { p: ["acetoin", "C00466"], s: ["pyruvate", "C00022"], f: ["", ""] },
