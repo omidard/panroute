@@ -184,6 +184,14 @@ function render(routeId) {
   if (allBtn) allBtn.onclick = () => runPathwayEnzymes();
   [...document.querySelectorAll(".enzview")].forEach(b => b.onclick = () =>
     openEnzymeLab(b.dataset.rid, { ko: b.dataset.ko, sub: b.dataset.sub, name: b.dataset.subname }));
+  // mark steps whose enzyme bundle is already precomputed — so the STATIC site (no backend) shows
+  // which "enzyme candidates" are ready to open instantly (a HEAD probe per distinct reaction).
+  [...new Set([...document.querySelectorAll(".enzview")].map(b => b.dataset.rid))].forEach(rid => {
+    fetch(`data/enzymes/${rid}.json`, { method: "HEAD" }).then(r => { if (!r.ok) return;
+      document.querySelectorAll(`.enzview[data-rid="${rid}"]`).forEach(b => {
+        b.classList.add("done"); if (!/✓/.test(b.textContent)) b.textContent = "⚗ enzyme candidates ✓"; });
+    }).catch(() => {});
+  });
 
   // wire navigation
   const go = id => { window.scrollTo(0, 0); render(id); };
