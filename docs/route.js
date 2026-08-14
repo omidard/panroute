@@ -114,7 +114,7 @@ function render(routeId) {
       ${x.eq ? `<div class="rxeq">${x.eq}</div>` : ""}
       <div class="dirtable">${rows.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join("")}</div>
       <div class="xrefs">${xrefs.join("")}</div>
-      <div class="enzrow"><button class="enzbtn${heteroIdx.has(i) ? " het" : ""}" data-rid="${rx.rid}" data-from="${st.from}" data-to="${st.to}">⚗ predict enzyme kinetics &amp; thermostability</button><span class="enzann" id="enzann-${rx.rid}"></span></div>
+      <div class="enzrow"><button class="enzbtn${heteroIdx.has(i) ? " het" : ""}" data-rid="${rx.rid}" data-ko="${(rx.kos || []).join(",")}" data-sub="${st.from}" data-subname="${((r.path.find(p => p.cid === st.from) || {}).name || "").replace(/"/g, "&quot;")}">⚗ predict enzyme kinetics &amp; thermostability</button><span class="enzann" id="enzann-${rx.rid}"></span></div>
       </div>`;
   }).join("")).join("");
 
@@ -175,7 +175,7 @@ function render(routeId) {
 
   // wire the per-reaction enzyme-prediction buttons
   [...document.querySelectorAll(".enzbtn")].forEach(b => b.onclick = () =>
-    openEnzymeLab(b.dataset.rid, { from: b.dataset.from, to: b.dataset.to }));
+    openEnzymeLab(b.dataset.rid, { ko: b.dataset.ko, sub: b.dataset.sub, name: b.dataset.subname }));
 
   // wire navigation
   const go = id => { window.scrollTo(0, 0); render(id); };
@@ -212,9 +212,10 @@ function elClose() { document.getElementById("enzlab").classList.add("hidden");
 document.addEventListener("click", e => { if (e.target && e.target.id === "el-close") elClose(); });
 document.addEventListener("keydown", e => { if (e.key === "Escape") elClose(); });
 
-async function openEnzymeLab(rid, step) {
+async function openEnzymeLab(rid, opts) {
+  opts = opts || {};
   const lab = document.getElementById("enzlab"); lab.classList.remove("hidden");
-  document.getElementById("el-title").innerHTML = `Enzyme candidates · <span style="color:var(--neon)">${rid}</span> <span style="color:var(--dim);font-size:13px">${step.from ? "" : ""}</span>`;
+  document.getElementById("el-title").innerHTML = `Enzyme candidates · <span style="color:var(--neon)">${rid}</span>`;
   const body = document.getElementById("el-body");
   body.innerHTML = `<div class="el-loading">loading variant predictions…</div>`;
   let data = ENZCACHE[rid];
@@ -222,18 +223,47 @@ async function openEnzymeLab(rid, step) {
     try { const r = await fetch(`data/enzymes/${rid}.json`); if (!r.ok) throw 0; data = await r.json(); ENZCACHE[rid] = data; }
     catch (e) { data = null; }
   }
-  if (!data || !data.variants || !data.variants.length) {
-    body.innerHTML = `<div class="el-empty"><div class="ee-ic">⚗</div>
-      <p><b>No enzyme characterisation computed yet for ${rid}.</b></p>
-      <p>The variant pipeline — pull every KEGG orthologue of this enzyme, cluster at 80% identity,
-      then predict kcat / Km (MPEK) and a thermostability curve (TemStaPro) for each — runs offline
-      (the protein-language models are gigabytes; they can't run in the browser). Once precomputed for
-      this reaction the 3D landscape and ranked variant table appear here.</p>
-      <p class="hint">Run: <code>bin/enzyme_characterize.py --rid ${rid} --ko &lt;KO&gt; --sub-cid &lt;substrate&gt;</code></p></div>`;
-    return;
+  if (data && data.variants && data.variants.length) {
+    EL_STATE = { rid, data, sortKey: "rank", sortDir: 1, selected: 0 };
+    return renderEnzLab();
   }
-  EL_STATE = { rid, data, sortKey: "rank", sortDir: 1, selected: 0 };
-  renderEnzLab();
+  // not cached -> offer an on-demand LIVE run (works when the page is served by the analysis
+  // backend; the static github.io site has no backend, so it falls back to a "run locally" note).
+  const koTxt = opts.ko || "";
+  body.innerHTML = `<div class="el-empty"><div class="ee-ic">⚗</div>
+    <p><b>Not analysed yet — run it now.</b></p>
+    <p>This pulls every KEGG orthologue of this enzyme${koTxt ? ` (${koTxt})` : ""}, clusters them at 80% identity,
+    then runs <b>MPEK</b> (kcat / Km) and <b>TemStaPro</b> (thermostability) on each variant. The models are
+    gigabytes and run on the analysis server — a few minutes the first time, then cached so it's instant after.</p>
+    <button id="el-run" class="enzbtn" style="font-size:13px;padding:8px 16px">▶ Run live analysis</button>
+    <div id="el-prog" class="el-prog"></div>
+    <p class="hint" style="margin-top:14px">No backend? Serve the app live with <code>python -m server.app</code> (then open localhost:8000),
+    or precompute offline: <code>bin/enzyme_characterize.py --rid ${rid} --ko ${koTxt || "&lt;KO&gt;"} --sub-cid ${opts.sub || "&lt;substrate&gt;"}</code></p></div>`;
+  const btn = document.getElementById("el-run");
+  if (btn) btn.onclick = () => runLiveEnzyme(rid, opts);
+}
+
+/* stream a live on-demand run from the backend (/api/enzyme, Server-Sent Events). */
+function runLiveEnzyme(rid, opts) {
+  const prog = document.getElementById("el-prog");
+  const btn = document.getElementById("el-run");
+  if (btn) { btn.disabled = true; btn.textContent = "running…"; }
+  const log = (m, cls) => { if (prog) { const d = document.createElement("div"); d.className = "pl" + (cls ? " " + cls : ""); d.textContent = m; prog.appendChild(d); prog.scrollTop = prog.scrollHeight; } };
+  log("connecting to analysis server…");
+  const q = new URLSearchParams({ rid, ko: opts.ko || "", sub: opts.sub || "", name: opts.name || "", temps: "37" });
+  let es, gotAny = false;
+  try { es = new EventSource(`api/enzyme?${q}`); } catch (e) { log("no analysis backend reachable.", "err"); return; }
+  es.addEventListener("progress", e => { gotAny = true; try { log(JSON.parse(e.data).msg); } catch (x) {} });
+  es.addEventListener("done", e => { gotAny = true; es.close();
+    let data = null; try { data = JSON.parse(e.data); } catch (x) {}
+    if (data && data.variants && data.variants.length) { ENZCACHE[rid] = data;
+      EL_STATE = { rid, data, sortKey: "rank", sortDir: 1, selected: 0 }; renderEnzLab(); }
+    else log("analysis finished but returned no variants.", "err"); });
+  es.addEventListener("error", e => { let m = ""; try { m = JSON.parse(e.data).message; } catch (x) {} if (m) { log("error: " + m, "err"); es.close(); } });
+  es.onerror = () => { es.close();
+    if (!gotAny) { log("could not reach the analysis backend (this static site has none).", "err");
+      log("run it live with:  python -m server.app   → open localhost:8000", "err");
+      if (btn) { btn.disabled = false; btn.textContent = "▶ Run live analysis"; } } };
 }
 
 function renderEnzLab() {

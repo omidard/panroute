@@ -405,3 +405,9 @@ html,body{height:auto;overflow-x:hidden}
 .el-table tbody tr{cursor:pointer}
 .el-table tbody tr:hover{background:rgba(57,192,255,.08)}
 .el-table tbody tr.sel{background:rgba(57,192,255,.16)}
+
+.el-prog{margin-top:12px;max-height:200px;overflow:auto;font-family:ui-monospace,monospace;font-size:11px;
+  text-align:left;background:#0c1524;border:1px solid var(--stroke);border-radius:8px;padding:8px;display:none}
+.el-prog:not(:empty){display:block}
+.el-prog .pl{color:var(--dim);line-height:1.5;white-space:pre-wrap}
+.el-prog .pl.err{color:var(--amber)}
