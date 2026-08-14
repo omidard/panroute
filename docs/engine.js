@@ -29,7 +29,17 @@
       this.mapBase = opts.mapBase || "assets/map01100/";
       this.loader = opts.loader || (url => fetch(url).then(r => r.json()));
       this.net = null; this.layout = null; this.tax = null; this.feed = null; this.thermo = {};
-      this.koCache = {};
+      this.koCache = {}; this.traits = {};
+      // host-tractability tie-break for chassis/donor ranking. Native coverage is ALWAYS primary
+      // (the point is to clone the fewest genes into an organism that already runs most of the
+      // pathway); this only orders organisms that are otherwise equal. Curated, not exhaustive.
+      this.PREF = { "Escherichia coli": 5, "Bacillus subtilis": 5, "Pseudomonas putida": 4.5,
+        "Corynebacterium glutamicum": 4.5, "Lactococcus lactis": 3.5, "Cupriavidus necator": 3.5,
+        "Vibrio natriegens": 3.5, "Clostridium acetobutylicum": 3, "Bacillus megaterium": 2.5,
+        "Streptomyces coelicolor": 2.5, "Clostridium ljungdahlii": 2.5, "Pseudomonas fluorescens": 2.5 };
+      this.PREF_GENUS = { Escherichia: 3, Bacillus: 3, Pseudomonas: 2.5, Corynebacterium: 2.5,
+        Lactococcus: 2, Lactobacillus: 1.5, Streptomyces: 1.5, Clostridium: 1.5, Cupriavidus: 2,
+        Rhodococcus: 1.5, Synechocystis: 1.5, Synechococcus: 1.5, Vibrio: 1.5 };
     }
 
     async load() {
@@ -47,6 +57,7 @@
       this.sides = await this.loader(this.base + "rxnsides.json").catch(() => ({})); // L/R sides for signed ΔG
       this.dgSuspect = new Set(await this.loader(this.base + "thermo_suspect.json").catch(() => [])); // |ΔG|>200 = unbalanced artifact
       this.excluded = await this.loader(this.base + "excluded.json").catch(() => ({}));   // currency/C1-sink metabolites + why
+      this.traits = await this.loader(this.base + "traits.json").catch(() => ({}));   // species -> {ox,temp,safety} for chassis/donor ranking
 
       // ---- collapse synonym compound IDs to one canonical node, IN THE GRAPH ----
       // KEGG fragments a metabolite across several compound IDs (e.g. 2-acetolactate C00900 /
@@ -254,6 +265,99 @@
     }
     species(name) { const t = name.replace(/'/g, "").split(/\s+/); return t.length >= 2 ? t.slice(0, 2).join(" ") : t[0]; }
 
+    // host-tractability score (chassis/donor tie-break only; native coverage is primary)
+    hostScore(species, gram) {
+      let s = 0;
+      if (this.PREF[species] != null) s = this.PREF[species];
+      else { const g = (species || "").split(" ")[0]; if (this.PREF_GENUS[g] != null) s = this.PREF_GENUS[g]; }
+      const tr = (this.traits || {})[species] || {};
+      if (tr.safety === "GRAS/QPS") s += 1.5; else if (tr.safety === "pathogen") s -= 2; else if (tr.safety === "opportunist") s -= 0.5;
+      if (tr.temp === "mesophile") s += 0.4;
+      if (tr.ox === "facultative" || tr.ox === "aerobe") s += 0.3;
+      return s;
+    }
+
+    /* ---- heterologous-expression design ----
+       Called only when NO genome encodes a full native route (T2 == 0). For each plausible
+       route it finds the organism that natively runs the MOST steps (the best chassis / partial-
+       pathway host), then mines the ENTIRE enzyme space — every KEGG genome that carries the gene
+       — for donor organisms supplying each MISSING step. Result: a concrete "clone gene(s) X from
+       donor A into chassis C" plan, per route, with the native vs heterologous split.
+       Everything is derived from the real KEGG KO→genome mapping; nothing is invented. */
+    heteroScenarios(routes, orgKO, rxnSat, feas) {
+      const HET_ROUTES = 15, HET_SHOW = 6, MAX_DONORS = 6;
+      const cand = routes.slice(0, HET_ROUTES);
+      const codes = Object.keys(orgKO);
+      const stepSat = (H, step) => step.reactions.some(rx => rxnSat(H, rx));
+
+      // Pass A — best chassis per candidate route: maximise natively-encoded steps, break ties by
+      // host tractability. An organism must carry ≥1 step to be a partial-pathway host.
+      const best = {};                       // route.id -> {code, cover, sat:[stepIdx], hostScore}
+      for (const route of cand) {
+        let top = null;
+        for (const code of codes) {
+          const H = orgKO[code], t = this.tax[code]; if (!t) continue;
+          const sat = [];
+          for (let si = 0; si < route.steps.length; si++) if (stepSat(H, route.steps[si])) sat.push(si);
+          if (!sat.length) continue;
+          const hs = this.hostScore(t[0], t[1]);
+          if (!top || sat.length > top.cover || (sat.length === top.cover && hs > top.hostScore))
+            top = { code, cover: sat.length, sat, hostScore: hs };
+        }
+        if (top) best[route.id] = top;
+      }
+
+      // Pass B — for each chosen chassis, split native vs heterologous and mine donors for the gaps.
+      const scen = [];
+      for (const route of cand) {
+        const b = best[route.id]; if (!b) continue;      // nobody carries any step of this route
+        const chassisCode = b.code, t = this.tax[chassisCode];
+        const satSet = new Set(b.sat), hetero = [];
+        for (let si = 0; si < route.steps.length; si++) {
+          if (satSet.has(si)) continue;
+          const step = route.steps[si], rx = step.reactions[0] || {};
+          const stepKOs = new Set(); step.reactions.forEach(r => (r.kos || []).forEach(k => stepKOs.add(k)));
+          // donor mining across the whole enzyme space: every genome that satisfies this step
+          const donorMap = {};                            // species -> {gram, kos:Set}
+          for (const code of codes) {
+            if (code === chassisCode) continue;
+            const H = orgKO[code]; if (!stepSat(H, step)) continue;
+            const tt = this.tax[code]; if (!tt) continue;
+            const cur = donorMap[tt[0]] || (donorMap[tt[0]] = { gram: tt[1], kos: new Set() });
+            for (const k of stepKOs) if (H.has(k)) cur.kos.add(k);
+          }
+          const donors = Object.entries(donorMap)
+            .map(([sp, v]) => { const tr = this.traits[sp] || {};
+              return { species: sp, gram: v.gram, kos: [...v.kos], ox: tr.ox, temp: tr.temp, safety: tr.safety, hs: this.hostScore(sp, v.gram) }; })
+            .sort((a, c) => c.hs - a.hs || a.species.localeCompare(c.species))
+            .slice(0, MAX_DONORS);
+          // uncreditable = we can't name a bacterial gene to clone. Two very different reasons:
+          //  no_ko            → no enzyme (KO) is mapped to this transition at all (often an RCLASS
+          //                     graph shortcut) — the step may not be a real single reaction.
+          //  no_bacterial_donor → the enzyme IS known (KO exists) but no bacterial genome carries it,
+          //                     so the gene must come from a plant/fungal/engineered source.
+          const reason = stepKOs.size === 0 ? "no_ko" : (donors.length === 0 ? "no_bacterial_donor" : null);
+          hetero.push({ idx: si, from: step.from, from_name: this.cname(step.from), to: step.to, to_name: this.cname(step.to),
+            rid: rx.rid, ec: (rx.ec || []).join("/"), enzymes: step.enzymes, kos: [...stepKOs],
+            donors, n_donor_species: Object.keys(donorMap).length, uncreditable: !!reason, uncreditable_reason: reason });
+        }
+        if (!hetero.length) continue;
+        const tr = this.traits[t[0]] || {};
+        scen.push({ route_id: route.id, length: route.length,
+          feasible: !!(feas[route.id] && feas[route.id].feasible),
+          chassis: { code: chassisCode, species: t[0], gram: t[1], domain: t[2], cover: b.cover,
+            ox: tr.ox, temp: tr.temp, safety: tr.safety, hostScore: b.hostScore },
+          native_idx: [...satSet], hetero, n_clone: hetero.length,
+          n_uncreditable: hetero.filter(h => h.uncreditable).length });
+      }
+      // realizable designs first: fewest steps with NO nameable bacterial gene (a design where
+      // every gap can be filled from a real donor is actionable; one with an unfindable enzyme is
+      // a research problem), then fewest genes to clone, thermo-feasible, better host, shorter.
+      scen.sort((a, c) => a.n_uncreditable - c.n_uncreditable || a.n_clone - c.n_clone ||
+        (c.feasible - a.feasible) || (c.chassis.hostScore - a.chassis.hostScore) || a.length - c.length);
+      return scen.slice(0, HET_SHOW);
+    }
+
     // ---- full run: emits events (mirror engine.run_query) ----
     async run(start, end, feedstock, emit, opts) {
       opts = opts || {}; const maxLen = opts.maxLen || 5, maxRoutes = opts.maxRoutes || 60;
@@ -343,9 +447,16 @@
         r.feedstock = feed;
         emit("organism", r);
       }
+      // no native producer? design heterologous-expression scenarios (chassis + donor genes)
+      let hetero = null;
+      if (rows.length === 0) {
+        emit("phase", { msg: "no native producer — designing heterologous expression", pct: 90 });
+        hetero = this.heteroScenarios(routes, orgKO, rxnSat, feas);
+        emit("hetero", { scenarios: hetero });
+      }
       emit("done", { n_routes: routes.length, shortest: shortest.length,
         T0: t0.size, T2: rows.length, T3: feedstock ? up : null, overflow_excluded: feedstock ? ov : null,
-        gram: gc, kegg_release: this.net.kegg_release });
+        gram: gc, hetero: hetero ? hetero.length : 0, kegg_release: this.net.kegg_release });
     }
 
     resolveRoute(route) {

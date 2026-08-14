@@ -2,6 +2,7 @@
   --bg:#070b12; --bg2:#0b1220; --panel:rgba(18,26,40,.72); --stroke:#1e2c42;
   --ink:#dce6f5; --dim:#7d8ca6; --cyan:#39c0ff; --blue:#2f7bff; --neon:#4defff;
   --green:#22d18c; --red:#ff5d6c; --amber:#ffb547; --gpos:#3a8bff; --gneg:#ff8a3a; --arch:#22d18c;
+  --violet:#b07cff;
 }
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:radial-gradient(1200px 700px at 70% -10%,#122036 0,var(--bg) 60%);
@@ -281,3 +282,68 @@ html,body{height:auto;overflow-x:hidden}
 .pwrank{color:var(--neon);font-variant-numeric:tabular-nums}
 .pwopen{margin-left:auto;color:var(--cyan);font-size:11px;opacity:.7}
 .pw:hover .pwopen{opacity:1}
+
+/* ===== heterologous-expression design (engineer panel + route-report plan) ===== */
+#engineer{padding:16px 18px;margin-top:2px;border-color:rgba(176,124,255,.32);
+  background:linear-gradient(180deg,rgba(176,124,255,.07),var(--panel))}
+.eng-head{display:flex;gap:13px;align-items:flex-start;margin-bottom:14px}
+.eng-ic{flex:none;width:34px;height:34px;border-radius:9px;display:grid;place-items:center;font-size:19px;
+  color:#fff;background:linear-gradient(135deg,var(--violet),#7a4dff);box-shadow:0 0 16px rgba(176,124,255,.5)}
+.eng-head h3{margin:0 0 4px;font-size:15px;color:var(--ink)}
+.eng-head p{margin:0;font-size:12.5px;color:var(--dim);max-width:900px;line-height:1.5}
+.eng-head p b{color:var(--ink)}
+.hcards{display:flex;flex-direction:column;gap:12px}
+.hcard{border:1px solid var(--stroke);border-radius:12px;padding:12px 14px;background:#0b1220cc;cursor:pointer;
+  transition:border-color .15s,transform .1s}
+.hcard:hover{border-color:rgba(176,124,255,.55);transform:translateY(-1px)}
+.hcard.lead{border-color:rgba(176,124,255,.5);background:linear-gradient(180deg,rgba(176,124,255,.09),#0b1220cc)}
+.hc-top{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
+.hc-chassis{display:flex;align-items:center;gap:8px;flex-wrap:wrap;font-size:13px}
+.hc-host b{color:var(--ink)} .hc-hint{color:var(--dim);font-size:11px;font-weight:400}
+.hc-badges{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.clonebadge{font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;
+  background:rgba(176,124,255,.18);color:var(--violet);border:1px solid rgba(176,124,255,.35)}
+.hc-open{background:rgba(176,124,255,.14);border:1px solid rgba(176,124,255,.4);color:var(--violet);
+  border-radius:8px;padding:4px 10px;font-size:11.5px;font-weight:600;cursor:pointer}
+.hc-open:hover{background:rgba(176,124,255,.24)}
+.hc-strip{display:flex;align-items:center;flex-wrap:wrap;gap:5px;margin:11px 0 4px}
+.hmet{font-size:11.5px;color:var(--ink);background:#111c2e;border:1px solid var(--stroke);
+  border-radius:7px;padding:3px 7px;white-space:nowrap}
+.hstepc{font-size:10.5px;font-family:ui-monospace,monospace;padding:2px 7px;border-radius:20px;white-space:nowrap}
+.hstepc.nat{color:var(--green);background:rgba(34,209,140,.13);border:1px solid rgba(34,209,140,.3)}
+.hstepc.het{color:var(--violet);background:rgba(176,124,255,.16);border:1px solid rgba(176,124,255,.45);font-weight:700}
+.hc-steps{margin-top:9px;display:flex;flex-direction:column;gap:7px}
+.hs-row{border-left:2px solid rgba(176,124,255,.5);padding:5px 0 5px 10px}
+.hs-row.unc{border-left-color:var(--amber)}
+.hs-h{display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:12px}
+.hs-enz{color:var(--ink);font-weight:600} .hs-rx{color:var(--dim);font-size:11px;font-family:ui-monospace,monospace}
+.hs-rx a{color:var(--cyan);text-decoration:none} .hs-rx a:hover{text-decoration:underline}
+.hs-donors{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:5px}
+.donor-lab,.pl{font-size:10.5px;color:var(--dim);text-transform:uppercase;letter-spacing:.5px}
+.donor{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-style:italic;color:var(--ink);
+  background:#101a2b;border:1px solid var(--stroke);border-radius:16px;padding:2px 8px 2px 6px}
+.donor .dko{font-style:normal;font-family:ui-monospace,monospace;font-size:10px;color:var(--cyan)}
+.donor .dsafe{font-style:normal;font-size:9.5px;padding:1px 5px;border-radius:10px;background:rgba(125,140,166,.2);color:var(--dim)}
+.donor .dsafe.good{background:rgba(34,209,140,.18);color:var(--green)}
+.donor .dsafe.bad{background:rgba(255,93,108,.18);color:var(--red)}
+.dmore{font-size:11px;color:var(--dim)} .uncflag{font-size:11.5px;color:var(--amber)}
+
+/* route-report engineering plan + step tags */
+.engbanner{border:1px solid rgba(176,124,255,.35);border-radius:11px;padding:11px 13px;margin:6px 0 12px;
+  background:linear-gradient(180deg,rgba(176,124,255,.08),transparent)}
+.eb-title{font-weight:700;color:var(--violet);font-size:13.5px;margin-bottom:4px}
+.eb-body{font-size:12.5px;color:var(--ink);line-height:1.5}.eb-body b{color:#fff}
+.planlist{display:flex;flex-direction:column;gap:8px;margin-bottom:6px}
+.planstep{border:1px solid var(--stroke);border-left:3px solid var(--violet);border-radius:9px;padding:8px 11px;background:#0b1220aa}
+.planstep.unc{border-left-color:var(--amber)}
+.ps-head{font-size:12.5px;color:var(--ink);display:flex;gap:9px;align-items:baseline;flex-wrap:wrap}
+.ps-idx{font-size:10px;font-weight:700;color:var(--violet);background:rgba(176,124,255,.15);border-radius:5px;padding:1px 6px}
+.ps-rx{color:var(--dim);font-size:11px;font-family:ui-monospace,monospace}
+.ps-rx a{color:var(--cyan);text-decoration:none}
+.ps-donors{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:7px}
+.ps-warn{margin-top:6px;font-size:12px;color:var(--amber);line-height:1.45}
+.rxstep.s-het{background:rgba(176,124,255,.08);border-radius:8px}
+.rxstep.s-nat{background:rgba(34,209,140,.06);border-radius:8px}
+.stepflag{font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px;white-space:nowrap}
+.stepflag.het{color:var(--violet);background:rgba(176,124,255,.18)}
+.stepflag.nat{color:var(--green);background:rgba(34,209,140,.15)}

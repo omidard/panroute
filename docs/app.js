@@ -77,8 +77,9 @@ $("#query").addEventListener("submit", e => { e.preventDefault();
 /* ---- run the live in-browser search ---- */
 async function runLive(start, end, feed) {
   RUNNING = true;
-  ST = { routes: [], byId: {}, feas: {}, orgs: [], ep: null, query: { start, end, feed } };
+  ST = { routes: [], byId: {}, feas: {}, orgs: [], ep: null, query: { start, end, feed }, hetero: null, heteroById: {} };
   map.reset(true);
+  $("#engineer").classList.add("hidden");
   $("#intro").classList.add("hidden"); $("#scrollcue").classList.add("hidden");
   $("#orglist").innerHTML = ""; $("#orgCount").textContent = "0"; $("#routeCount").textContent = "0"; $("#feasCount").textContent = "0";
   $("#results").classList.add("hidden"); $("#drawer").classList.add("hidden");
@@ -101,6 +102,7 @@ function handleEvent(event, data) {
     map.traceRoutes(data.routes, ST.ep.end.name, !!(ST.ep.end && ST.ep.end.xy)); }
   else if (event === "thermo") { ST.feas[data.route_id] = data; $("#feasCount").textContent = Object.values(ST.feas).filter(x => x.feasible).length; }
   else if (event === "route_genomes") { ST.routeGenomes = data; }
+  else if (event === "hetero") { ST.hetero = data.scenarios || []; ST.heteroById = {}; ST.hetero.forEach(s => ST.heteroById[s.route_id] = s); }
   else if (event === "organism") { addOrganism(data); }
   else if (event === "done") { ST.done = data;
     if (data.error) { $("#phase").textContent = data.excluded ? "✕ endpoint not usable" : "✕ no route";
@@ -159,18 +161,23 @@ function renderResults() {
   const enzymes = shortest ? [...new Set(shortest.steps.map(s => s.enzymes).filter(Boolean))].join(" → ") : "";
   const nFeas = Object.values(ST.feas).filter(x => x.feasible).length;
 
+  const hasHet = d.T2 === 0 && ST.hetero && ST.hetero.length;
+  const best = hasHet ? ST.hetero[0] : null;
   // HERO ROW: big product card + stat cards
   $("#herorow").innerHTML = `
     <div class="hero glass">
-      <div class="ribbon" style="${d.T2 > 0 ? "" : "background:var(--amber)"}">${d.T2 > 0 ? "NATIVE ROUTE" : (ST.routes.length ? "NO GENOME-ENCODED ROUTE" : "NO ROUTE FOUND")}</div>
+      <div class="ribbon" style="${d.T2 > 0 ? "" : "background:var(--amber)"}">${d.T2 > 0 ? "NATIVE ROUTE" : (ST.routes.length ? "NO NATURAL PRODUCER" : "NO ROUTE FOUND")}</div>
       <div class="hero-head">${ST.ep.end.name}<span>from ${ST.ep.start.name}</span></div>
-      <div class="hero-num">${d.T2.toLocaleString()}<span>${d.T2 > 0 ? "prokaryote species encode a full native route" : (ST.routes.length ? "genomes encode a route within the search horizon — carbon-skeleton routes exist but the native path may be longer (see below)" : "carbon-skeleton routes within the search horizon")}</span></div>
+      <div class="hero-num">${d.T2.toLocaleString()}<span>${d.T2 > 0 ? "prokaryote species encode a full native route" : (ST.routes.length ? "species make it natively — no single genome encodes the whole pathway" : "carbon-skeleton routes within the search horizon")}</span></div>
       <div class="hero-gram"><div class="gbar">${gramBar}</div><div class="gleg">${gramLeg}</div></div>
-      <div class="hero-route">committed route&nbsp; <b>${enzymes || "—"}</b></div>
+      <div class="hero-route">${d.T2 > 0 ? `committed route&nbsp; <b>${enzymes || "—"}</b>` : (hasHet ? `↓ heterologous design below&nbsp; <b>clone ${best.n_clone} gene${best.n_clone > 1 ? "s" : ""} into ${best.chassis.species}</b>` : "no engineered design available")}</div>
     </div>
     ${statCard(ST.routes.length, "native routes", `shortest ${d.shortest} steps`, "#2f7bff")}
     ${statCard(nFeas, "thermo-feasible routes", "eQuilibrator ΔG", "#22d18c")}
-    ${d.T3 != null ? statCard(d.T3, "can take up the feedstock", `${d.overflow_excluded} overflow-only excluded`, "#39c0ff") : ""}`;
+    ${hasHet ? statCard(ST.hetero.length, "heterologous designs", "chassis + donor genes", "#b07cff")
+             : (d.T3 != null ? statCard(d.T3, "can take up the feedstock", `${d.overflow_excluded} overflow-only excluded`, "#39c0ff") : "")}`;
+
+  if (hasHet) renderHetero(); else $("#engineer").classList.add("hidden");
 
   // CATALOG columns = routes sorted by length
   COLS = [...ST.routes].sort((a, b) => a.length - b.length); COLIDX = {};
@@ -196,6 +203,71 @@ function renderResults() {
 function statCard(n, label, sub, c) {
   return `<div class="statcard glass" style="--c:${c}"><div class="sc-num">${(+n).toLocaleString()}</div>
     <div class="sc-lab">${label}</div><div class="sc-sub">${sub}</div></div>`;
+}
+
+/* ---- heterologous-expression design panel (shown when NO genome makes the product natively) ----
+   Each scenario = a chassis that natively runs most of the route + the donor genes to clone for the
+   missing steps, mined from the whole KEGG enzyme space. Native steps green, heterologous purple. */
+const UNCRED = {
+  no_ko: ["no enzyme mapped", "no KEGG ortholog is annotated for this exact transition — it may be a graph shortcut rather than one reaction, so no gene can be named"],
+  no_bacterial_donor: ["no bacterial donor", "the enzyme is known but no sequenced bacterium carries it — the gene must come from a plant / fungal / engineered source"],
+};
+function gdot(g) { return `<span class="gdot" style="background:${GCOL[g] || GCOL.Other}"></span>`; }
+function traitChips(o) {
+  return [chip(OXLAB[o.ox]), chip(TEMPLAB[o.temp]), o.safety ? chip(SAFELAB[o.safety]) : ""].join("");
+}
+function heteroStepStrip(r, hetSet) {
+  return r.path.map((p, i) => {
+    const met = `<span class="hmet">${p.name}</span>`;
+    if (i === r.path.length - 1) return met;
+    const het = hetSet.has(i);
+    const enz = r.steps[i].enzymes || "?";
+    return `${met}<span class="hstepc ${het ? "het" : "nat"}" title="${het ? "clone this step" : "native to the chassis"}">${het ? "✚ " : ""}${enz}</span>`;
+  }).join("");
+}
+function heteroCard(s, rank) {
+  const r = ST.byId[s.route_id]; if (!r) return "";
+  const c = s.chassis, hetSet = new Set(s.hetero.map(h => h.idx));
+  const feas = s.feasible ? `<span class="badge feas">ΔG feasible</span>` : `<span class="badge infeas">ΔG uphill</span>`;
+  const unc = s.n_uncreditable ? `<span class="badge infeas" title="steps with no nameable bacterial gene">${s.n_uncreditable} unfindable</span>` : "";
+  const donorRows = s.hetero.map(h => {
+    const head = `<span class="hs-enz">✚ ${h.from_name} → ${h.to_name}</span>
+      <span class="hs-rx"><a href="https://www.kegg.jp/entry/${h.rid}" target="_blank" rel="noopener">${h.rid}</a>${h.ec ? " · EC " + h.ec : ""}</span>`;
+    if (h.uncreditable) { const u = UNCRED[h.uncreditable_reason] || ["unavailable", ""];
+      return `<div class="hs-row unc"><div class="hs-h">${head}</div>
+        <div class="hs-donors"><span class="uncflag" title="${u[1]}">⚠ ${u[0]}</span></div></div>`; }
+    const donors = h.donors.slice(0, 4).map(d =>
+      `<span class="donor" title="gene ${d.kos.join(", ")}${d.safety ? " · " + d.safety : ""}">${gdot(d.gram)}<i>${d.species}</i><span class="dko">${d.kos[0] || ""}</span></span>`).join("");
+    const more = h.n_donor_species > 4 ? `<span class="dmore">+${(h.n_donor_species - 4).toLocaleString()} more donors</span>` : "";
+    return `<div class="hs-row"><div class="hs-h">${head}</div>
+      <div class="hs-donors"><span class="donor-lab">clone from:</span>${donors}${more}</div></div>`;
+  }).join("");
+  return `<div class="hcard ${rank === 0 ? "lead" : ""}" data-id="${s.route_id}">
+    <div class="hc-top">
+      <div class="hc-chassis">${gdot(c.gram)}<span class="hc-host"><b>${c.species}</b> <span class="hc-hint">chassis · natively runs ${c.cover}/${s.length} steps</span></span>
+        ${traitChips(c)}</div>
+      <div class="hc-badges"><span class="clonebadge">clone ${s.n_clone} gene${s.n_clone > 1 ? "s" : ""}</span>${unc}${feas}
+        <button class="hc-open" data-id="${s.route_id}">open design ↗</button></div>
+    </div>
+    <div class="hc-strip">${heteroStepStrip(r, hetSet)}</div>
+    <div class="hc-steps">${donorRows}</div>
+  </div>`;
+}
+function renderHetero() {
+  const box = $("#engineer");
+  const best = ST.hetero[0];
+  const nDonorPool = new Set();
+  ST.hetero.forEach(s => s.hetero.forEach(h => h.donors.forEach(d => nDonorPool.add(d.species))));
+  box.innerHTML = `
+    <div class="eng-head">
+      <div class="eng-ic">✚</div>
+      <div><h3>No natural producer — heterologous expression design</h3>
+        <p>No sequenced prokaryote encodes the whole pathway to <b>${ST.ep.end.name}</b>. PanRoute searched the enzyme space of every KEGG genome to design a host: a <b>chassis</b> that already runs most of the route natively, plus the <b>donor genes</b> to clone for the missing steps. <span class="hint">Native steps are green, steps to engineer in are purple. Genome potential — a starting point for strain design, not a guarantee of function.</span></p></div>
+    </div>
+    <div class="hcards">${ST.hetero.map((s, i) => heteroCard(s, i)).join("")}</div>`;
+  box.classList.remove("hidden");
+  [...box.querySelectorAll(".hc-open, .hcard")].forEach(el => el.onclick = e => {
+    e.stopPropagation(); const id = +el.dataset.id; const rr = ST.byId[id]; if (rr) openRoutePage(rr); });
 }
 /* trait → [short label, colour] */
 const OXLAB = { aerobe: ["aerobe", "#ff8a3a"], facultative: ["facultative", "#d0a72a"],
@@ -321,6 +393,7 @@ function openRoutePage(r) {
     n_routes: o.n_routes, feedstock: o.feedstock, route_idx: o.route_idx || [] }));
   sessionStorage.setItem("panroute_route", JSON.stringify({
     routes, feas, genomes, orgs, current: r.id,
+    hetero: ST.heteroById || null,     // heterologous design keyed by route id (present only when T2==0)
     query: { start: ST.ep.start, end: ST.ep.end },
     genome_pending: !!(ST.done && ST.done.genome_pending),
   }));

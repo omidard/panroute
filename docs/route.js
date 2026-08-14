@@ -16,6 +16,11 @@ function dbLink(db, id) {
 }
 const dgCls = dg => typeof dg === "number" ? (dg < -5 ? "fav" : dg > 5 ? "unfav" : "rev") : "rev";
 function primarySub(rid) { const s = (INFO[rid] || {}).subsystems || []; return s[0] || "Other / unassigned"; }
+const gdotR = g => `<span class="gdot" style="background:${GCOL[g] || GCOL.Other}"></span>`;
+const UNCREDR = {
+  no_ko: ["no enzyme mapped", "no KEGG ortholog is annotated for this exact transition — it may be a carbon-skeleton graph shortcut rather than a single reaction, so no gene can be named"],
+  no_bacterial_donor: ["no bacterial donor", "the enzyme is known but no sequenced bacterium carries it — the gene must come from a plant, fungal or engineered source"],
+};
 
 let BUNDLE = null;
 async function main() {
@@ -40,6 +45,9 @@ function render(routeId) {
   let idx = routes.findIndex(x => x.id === routeId); if (idx < 0) idx = 0;
   const r = routes[idx]; BUNDLE.current = r.id;
   const feasObj = (BUNDLE.feas && (BUNDLE.feas[r.id] || (BUNDLE.feas.feasible !== undefined ? BUNDLE.feas : null))) || null;
+  // heterologous-design scenario for this route (present only when no genome makes the product)
+  const het = (BUNDLE.hetero && BUNDLE.hetero[r.id]) || null;
+  const heteroIdx = new Set(het ? het.hetero.map(h => h.idx) : []);
 
   // subsystem colour map for this route
   const subs = [...new Set(r.steps.map(s => primarySub(s.reactions[0].rid)))];
@@ -62,15 +70,18 @@ function render(routeId) {
                        : `<div class="struct nostruct">${cid}<br>(no structure)</div>`;
     return `<div class="metnode ${role}">${struct}<div class="mname">${name}</div></div>`;
   }
-  function rxStep(st) {
+  function rxStep(st, gi) {
     const rx = st.reactions[0], x = INFO[rx.rid] || {};
     const dg = x.our_dg;
     const dgchip = typeof dg === "number"
       ? `<span class="dgchip dg ${dgCls(dg)}" style="background:rgba(120,120,120,.15)">ΔG ${dg}</span>` : "";
-    return `<div class="rxstep"><div class="enz">${st.enzymes || x.ec || "?"}</div>
+    // in engineering mode, tag every step native (chassis) vs heterologous (clone)
+    const engCls = het ? (heteroIdx.has(gi) ? " s-het" : " s-nat") : "";
+    const flag = het ? `<span class="stepflag ${heteroIdx.has(gi) ? "het" : "nat"}">${heteroIdx.has(gi) ? "✚ clone" : "native"}</span>` : "";
+    return `<div class="rxstep${engCls}"><div class="enz">${st.enzymes || x.ec || "?"}</div>
       <div class="rxarrow"></div>
       <div class="rxmeta"><a href="${KEGG(rx.rid)}" target="_blank">${rx.rid}</a>${x.ec ? " · EC " + x.ec : ""}</div>
-      ${dgchip}</div>`;
+      ${flag}${dgchip}</div>`;
   }
 
   const modHtml = modules.map(m => {
@@ -78,7 +89,7 @@ function render(routeId) {
     const path = [r.path[m.idx[0]]].concat(m.idx.map(i => r.path[i + 1]));
     let flow = metNode(path[0].cid, path[0].name, m.idx[0] === 0 ? "startpt" : "");
     m.steps.forEach((st, k) => {
-      flow += rxStep(st);
+      flow += rxStep(st, m.idx[k]);
       const pi = m.idx[k] + 1;
       flow += metNode(r.path[pi].cid, r.path[pi].name, pi === r.path.length - 1 ? "endpt" : "");
     });
@@ -117,6 +128,24 @@ function render(routeId) {
 
   const feas = feasObj ? (feasObj.feasible ? `<span class="badge feas">ΔG feasible ${feasObj.dG_sum ?? ""} kJ/mol</span>`
                                            : `<span class="badge infeas">ΔG infeasible</span>`) : "";
+  // heterologous-design plan (engineering mode)
+  const planHtml = het ? `
+    <div class="engbanner">
+      <div class="eb-title">✚ Heterologous expression design — no genome makes this natively</div>
+      <div class="eb-body">Proposed host: chassis ${gdotR(het.chassis.gram)}<b>${het.chassis.species}</b>, which natively runs
+        <b>${het.chassis.cover}/${het.length}</b> steps. Clone <b>${het.n_clone}</b> gene${het.n_clone > 1 ? "s" : ""} for the
+        missing (purple) step${het.n_clone > 1 ? "s" : ""}${het.n_uncreditable ? `; <b>${het.n_uncreditable}</b> step${het.n_uncreditable > 1 ? "s have" : " has"} no nameable bacterial gene` : ""}.
+        <span style="color:var(--dim)">Genome potential — a strain-design starting point, not a guarantee of function.</span></div>
+    </div>
+    <div class="planlist">${het.hetero.map(h => {
+      const head = `<span class="ps-idx">step ${h.idx + 1}</span> <b>${h.from_name} → ${h.to_name}</b>
+        <span class="ps-rx"><a href="${KEGG(h.rid)}" target="_blank" rel="noopener">${h.rid}</a>${h.ec ? " · EC " + h.ec : ""}${h.kos.length ? " · KO " + h.kos.join(", ") : ""}</span>`;
+      if (h.uncreditable) { const u = UNCREDR[h.uncreditable_reason] || ["unavailable", ""];
+        return `<div class="planstep unc"><div class="ps-head">${head}</div><div class="ps-warn">⚠ <b>${u[0]}</b> — ${u[1]}</div></div>`; }
+      const donors = h.donors.map(d => `<span class="donor" title="gene ${d.kos.join(", ")}">${gdotR(d.gram)}<i>${d.species}</i><span class="dko">${d.kos.join("/")}</span>${d.safety ? `<span class="dsafe ${d.safety === "pathogen" ? "bad" : d.safety === "GRAS/QPS" ? "good" : ""}">${d.safety}</span>` : ""}</span>`).join("");
+      const more = h.n_donor_species > h.donors.length ? `<span class="dmore">+${(h.n_donor_species - h.donors.length).toLocaleString()} more donor species</span>` : "";
+      return `<div class="planstep"><div class="ps-head">${head}</div><div class="ps-donors"><span class="pl">clone from:</span>${donors}${more}</div></div>`;
+    }).join("")}</div>` : "";
   // navigation: back to the results view + move between ranked pathways without a round-trip
   const total = routes.length;
   const opts = routes.map((x, i) => `<option value="${x.id}"${x.id === r.id ? " selected" : ""}>#${i + 1} · ${x.length} steps · ${(BUNDLE.genomes && BUNDLE.genomes[x.id]) || 0} species</option>`).join("");
@@ -132,7 +161,8 @@ function render(routeId) {
     <div class="rtitle"><i>${q.end.name}</i> from ${q.start.name}</div>
     <div class="rmeta">${r.length} steps · ${r.steps.reduce((a, s) => a + s.reactions.length, 0)} reactions · spans ${subs.length} subsystem${subs.length > 1 ? "s" : ""} ${feas}</div>
     <div class="subchips">${subs.map(s => `<span class="subchip" style="border-color:${subColor[s]}44;color:${subColor[s]}">${s}</span>`).join("")}</div>
-    <h2 class="sec">Pathway map · modularised by subsystem</h2>
+    ${het ? `<h2 class="sec">Heterologous expression plan</h2>${planHtml}` : ""}
+    <h2 class="sec">Pathway map · modularised by subsystem${het ? " <span class='hint' style='font-weight:400'>· green = native to chassis · purple = clone</span>" : ""}</h2>
     ${modHtml}
     <h2 class="sec">Reaction details · directionality across databases</h2>
     <p style="color:var(--dim);font-size:12.5px;margin:-6px 0 14px">Directionality as reported by each source (KEGG, Rhea, MetaCyc) plus our own component-contribution ΔrG′° where computed. Cross-refs via MetaNetX; not every reaction is mapped in every database.</p>
