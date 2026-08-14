@@ -34,7 +34,10 @@ CACHE = os.path.join(ROOT, "cache", "aaseq")
 WORK = os.path.join(ROOT, "cache", "enzyme_work")
 OUTDIR = os.path.join(DATA, "enzymes")
 MPEK_SH = "/data/metabolic_atlas/HETERO_CANDIDATES/pipeline/predict_kinetics_mpek.sh"
-TEMSTAPRO = os.path.join(ROOT, "tools", "TemStaPro", "temstapro")
+TSP_DIR = os.path.join(ROOT, "tools", "TemStaPro")
+TEMSTAPRO = os.path.join(TSP_DIR, "temstapro")
+# ProtT5-XL dir with a local pytorch_model.bin + tokenizer (T5EncoderModel loads the encoder from it,
+# so TemStaPro doesn't re-download the half-enc model; same encoder embeddings).
 PROTT5 = "/home/omidard/panGEM_pipeline/mpek/MTLKcatKM/checkpoints/prot_t5_xl_uniref50"
 MMSEQS = "/home/omidard/anaconda3/bin/mmseqs"
 KEGG = "https://rest.kegg.jp"
@@ -140,9 +143,8 @@ def run_mmseqs(fasta, prefix):
 
 def run_temstapro(fasta, out_tsv):
     env = dict(os.environ, USE_TF="0", USE_FLAX="0")
-    cmd = [sys.executable, TEMSTAPRO, "--input-fasta", fasta,
-           "--PT5-model", os.path.dirname(PROTT5),
-           "--mean-output", out_tsv, "--temperature-ranges"]
+    cmd = [sys.executable, TEMSTAPRO, "-f", fasta, "-d", PROTT5, "-t", TSP_DIR,
+           "--more-thresholds", "--mean-output", out_tsv]
     r = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if r.returncode != 0 or not os.path.exists(out_tsv):
         print("  [temstapro] FAILED:", r.stderr[-500:], flush=True)
@@ -151,13 +153,14 @@ def run_temstapro(fasta, out_tsv):
     with open(out_tsv) as fh:
         rd = csv.DictReader(fh, delimiter="\t")
         for row in rd:
-            cid = row.get("cand_id") or row.get(rd.fieldnames[0])
+            cid = row.get("protein_id") or row.get(rd.fieldnames[0])
             curve = {}
-            for t in (40, 45, 50, 55, 60, 65):
-                v = row.get(f"p{t}")
+            for t in (40, 45, 50, 55, 60, 65, 70, 75, 80):   # P(Tm above threshold), raw probability
+                v = row.get(f"t{t}_raw")
                 if v not in (None, ""):
                     curve[t] = float(v)
-            therm[cid] = {"curve": curve, "label": row.get("temstapro_label", "")}
+            therm[cid] = {"curve": curve, "label": row.get("left_hand_label") or row.get("right_hand_label", ""),
+                          "thermophilicity": row.get("thermophilicity", "")}
     return therm
 
 
@@ -237,6 +240,7 @@ def assemble_variants(reps, kin, therm, temps, idp):
                          "cluster_size": r["cluster_size"], "length": len(r["seq"]),
                          "kcat": kcat, "km": km, "kcat_km": eff, "kcat_by_temp": tvals,
                          "thermo": th.get("curve", {}), "thermo_label": th.get("label", ""),
+                         "thermophilicity": th.get("thermophilicity", ""),
                          "sequence": r["seq"]})
 
     def score(v):
