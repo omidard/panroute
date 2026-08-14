@@ -347,3 +347,61 @@ html,body{height:auto;overflow-x:hidden}
 .stepflag{font-size:9.5px;font-weight:700;padding:1px 6px;border-radius:10px;margin-left:4px;white-space:nowrap}
 .stepflag.het{color:var(--violet);background:rgba(176,124,255,.18)}
 .stepflag.nat{color:var(--green);background:rgba(34,209,140,.15)}
+
+/* ===== enzyme lab (per-reaction variant kinetics + thermostability) ===== */
+.enzrow{margin-top:11px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.enzbtn{background:rgba(57,192,255,.12);border:1px solid rgba(57,192,255,.4);color:var(--cyan);
+  border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer}
+.enzbtn:hover{background:rgba(57,192,255,.22)}
+.enzbtn.het{background:rgba(176,124,255,.14);border-color:rgba(176,124,255,.45);color:var(--violet)}
+.enzbtn.het:hover{background:rgba(176,124,255,.24)}
+.enzann{font-size:11.5px;color:var(--dim)}
+#enzlab{position:fixed;inset:0;z-index:200;background:rgba(4,7,13,.72);backdrop-filter:blur(6px);
+  display:flex;align-items:center;justify-content:center;padding:24px}
+.el-panel{width:min(1180px,96vw);max-height:92vh;overflow:auto;background:var(--bg2);
+  border:1px solid var(--stroke);border-radius:16px;box-shadow:0 20px 70px rgba(0,0,0,.6);padding:18px 20px}
+.el-head{display:flex;justify-content:space-between;align-items:center;position:sticky;top:-18px;
+  background:var(--bg2);padding:6px 0 12px;z-index:2;margin:-4px 0 4px}
+.el-head h3{margin:0;font-size:17px}
+#el-close{background:none;border:1px solid var(--stroke);color:var(--ink);width:32px;height:32px;
+  border-radius:8px;font-size:19px;cursor:pointer}
+.el-loading,.el-empty{padding:34px;text-align:center;color:var(--dim)}
+.el-empty{max-width:620px;margin:0 auto;line-height:1.55} .el-empty p{margin:8px 0}
+.el-empty .ee-ic{font-size:34px;margin-bottom:6px}
+.el-empty code{background:#0c1524;border:1px solid var(--stroke);border-radius:5px;padding:2px 6px;font-size:11.5px;color:var(--cyan)}
+.el-sum{font-size:13px;color:var(--ink);margin-bottom:12px}.el-sum b{color:var(--neon)}
+.el-method{font-size:11.5px;color:var(--dim);margin-top:5px}
+.el-grid{display:grid;grid-template-columns:1.35fr 1fr;gap:16px;align-items:start}
+@media(max-width:900px){.el-grid{grid-template-columns:1fr}}
+.el-plottitle{font-size:12.5px;font-weight:600;color:var(--ink);margin-bottom:4px}
+#el-scatter{width:100%;height:380px}
+.el-axnote{font-size:11px;color:var(--dim);margin-top:4px}
+.el-right{background:#0b1220;border:1px solid var(--stroke);border-radius:12px;padding:12px;min-height:380px}
+.es-h{font-size:14px;font-weight:700;margin-bottom:6px}.es-h i{color:var(--neon)}
+.es-kin{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--dim);margin-bottom:10px}
+.es-kin b{color:var(--ink);font-variant-numeric:tabular-nums}
+.es-lab{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--dim);margin-bottom:5px}
+.es-therm{margin-bottom:12px}
+.tbars{display:flex;align-items:flex-end;gap:8px;height:60px}
+.tb{display:flex;flex-direction:column;align-items:center;gap:3px;justify-content:flex-end}
+.tb-bar{width:16px;border-radius:3px 3px 0 0;min-height:2px}
+.tb-l{font-size:9.5px;color:var(--dim)}
+.es-tl{font-size:11px;color:var(--cyan);margin-top:5px}
+.es-org{margin-bottom:12px}
+.es-orgs{display:flex;flex-wrap:wrap;gap:5px}
+.oc{font-size:11px;font-style:italic;background:#101a2b;border:1px solid var(--stroke);border-radius:14px;padding:2px 8px}
+.oc i{color:var(--ink)}
+.es-seq pre{background:#0c1524;border:1px solid var(--stroke);border-radius:8px;padding:8px;
+  font-family:ui-monospace,monospace;font-size:10.5px;line-height:1.5;color:#9fd0ff;white-space:pre;overflow:auto;max-height:150px;margin:0}
+.el-tablewrap{margin-top:14px;overflow:auto;max-height:340px;border:1px solid var(--stroke);border-radius:10px}
+.el-table{width:100%;border-collapse:collapse;font-size:12px}
+.el-table th{position:sticky;top:0;background:#0e1726;color:var(--dim);text-align:right;padding:7px 10px;
+  cursor:pointer;white-space:nowrap;border-bottom:1px solid var(--stroke);font-weight:600;user-select:none}
+.el-table th:nth-child(2){text-align:left}
+.el-table th.on{color:var(--cyan)}
+.el-table th:hover{color:var(--ink)}
+.el-table td{padding:6px 10px;text-align:right;border-bottom:1px solid #16233a;font-variant-numeric:tabular-nums}
+.el-table td.org{text-align:left}.el-table td.org i{color:var(--ink)}
+.el-table tbody tr{cursor:pointer}
+.el-table tbody tr:hover{background:rgba(57,192,255,.08)}
+.el-table tbody tr.sel{background:rgba(57,192,255,.16)}

@@ -113,7 +113,9 @@ function render(routeId) {
         <span class="rxec">EC ${x.ec || "—"} · step ${i + 1} · ${st.enzymes || "?"}${x.subsystems && x.subsystems.length ? " · " + x.subsystems.join(", ") : ""}</span></div>
       ${x.eq ? `<div class="rxeq">${x.eq}</div>` : ""}
       <div class="dirtable">${rows.map(([k, v]) => `<span class="k">${k}</span><span class="v">${v}</span>`).join("")}</div>
-      <div class="xrefs">${xrefs.join("")}</div></div>`;
+      <div class="xrefs">${xrefs.join("")}</div>
+      <div class="enzrow"><button class="enzbtn${heteroIdx.has(i) ? " het" : ""}" data-rid="${rx.rid}" data-from="${st.from}" data-to="${st.to}">⚗ predict enzyme kinetics &amp; thermostability</button><span class="enzann" id="enzann-${rx.rid}"></span></div>
+      </div>`;
   }).join("")).join("");
 
   // species (filtered locally for this route)
@@ -171,6 +173,10 @@ function render(routeId) {
     ${spHtml}
     <p style="color:var(--dim);font-size:11.5px;margin-top:24px">Genome <i>potential</i>, not proof of production. KEGG / MetaNetX-derived · research use.</p>`;
 
+  // wire the per-reaction enzyme-prediction buttons
+  [...document.querySelectorAll(".enzbtn")].forEach(b => b.onclick = () =>
+    openEnzymeLab(b.dataset.rid, { from: b.dataset.from, to: b.dataset.to }));
+
   // wire navigation
   const go = id => { window.scrollTo(0, 0); render(id); };
   document.getElementById("toResults").onclick = e => { e.preventDefault();
@@ -192,4 +198,142 @@ function render(routeId) {
     } catch (e) {} });
   }
 }
+/* ================= enzyme lab: variant kinetics + thermostability deep-dive =================
+   Loads a precomputed per-reaction bundle (data/enzymes/<rid>.json) — real KEGG orthologue
+   sequences clustered at 80%, each scored by MPEK (kcat/Km) and TemStaPro (thermostability).
+   Renders a 3D scatter (Km x kcat x thermostability) + a sortable ranked table + a sequence /
+   source-organism viewer. Predictions are offline-precomputed (the models are too large to run
+   in-browser); an un-computed reaction says so honestly. */
+const ENZCACHE = {};
+let EL_STATE = null;
+
+function elClose() { document.getElementById("enzlab").classList.add("hidden");
+  try { Plotly.purge("el-scatter"); } catch (e) {} }
+document.addEventListener("click", e => { if (e.target && e.target.id === "el-close") elClose(); });
+document.addEventListener("keydown", e => { if (e.key === "Escape") elClose(); });
+
+async function openEnzymeLab(rid, step) {
+  const lab = document.getElementById("enzlab"); lab.classList.remove("hidden");
+  document.getElementById("el-title").innerHTML = `Enzyme candidates · <span style="color:var(--neon)">${rid}</span> <span style="color:var(--dim);font-size:13px">${step.from ? "" : ""}</span>`;
+  const body = document.getElementById("el-body");
+  body.innerHTML = `<div class="el-loading">loading variant predictions…</div>`;
+  let data = ENZCACHE[rid];
+  if (!data) {
+    try { const r = await fetch(`data/enzymes/${rid}.json`); if (!r.ok) throw 0; data = await r.json(); ENZCACHE[rid] = data; }
+    catch (e) { data = null; }
+  }
+  if (!data || !data.variants || !data.variants.length) {
+    body.innerHTML = `<div class="el-empty"><div class="ee-ic">⚗</div>
+      <p><b>No enzyme characterisation computed yet for ${rid}.</b></p>
+      <p>The variant pipeline — pull every KEGG orthologue of this enzyme, cluster at 80% identity,
+      then predict kcat / Km (MPEK) and a thermostability curve (TemStaPro) for each — runs offline
+      (the protein-language models are gigabytes; they can't run in the browser). Once precomputed for
+      this reaction the 3D landscape and ranked variant table appear here.</p>
+      <p class="hint">Run: <code>bin/enzyme_characterize.py --rid ${rid} --ko &lt;KO&gt; --sub-cid &lt;substrate&gt;</code></p></div>`;
+    return;
+  }
+  EL_STATE = { rid, data, sortKey: "rank", sortDir: 1, selected: 0 };
+  renderEnzLab();
+}
+
+function renderEnzLab() {
+  const { data } = EL_STATE;
+  const body = document.getElementById("el-body");
+  const kmVals = data.variants.map(v => v.km).filter(x => x != null);
+  const hasKin = kmVals.length > 0;
+  body.innerHTML = `
+    <div class="el-sum">
+      <b>${data.n_variants}</b> enzyme variants (clustered from <b>${data.n_sequences || data.n_ko_genes}</b> KEGG orthologues at 80% identity)
+      · substrate <b>${data.substrate.name || data.substrate.cid || "—"}</b>
+      · KO ${(data.ko || []).join(", ")}
+      <div class="el-method">kcat/Km: ${data.method.kinetics} · thermostability: ${data.method.thermostability} · <span style="color:var(--amber)">model predictions — a ranked shortlist for cloning, not measured values</span></div>
+    </div>
+    <div class="el-grid">
+      <div class="el-left">
+        <div class="el-plottitle">Km × kcat × thermostability${hasKin ? "" : " (kinetics unavailable — no substrate SMILES)"}</div>
+        <div id="el-scatter"></div>
+        <div class="el-axnote">x = Km (mM, log) · y = kcat (1/s, log) · z = P(Tm &gt; 55 °C) · colour = rank · lower-left-high is best</div>
+      </div>
+      <div class="el-right">
+        <div id="el-seq"></div>
+      </div>
+    </div>
+    <div class="el-tablewrap"><table class="el-table" id="el-table"></table></div>`;
+  drawScatter(); drawTable(); selectVariant(EL_STATE.selected);
+}
+
+function drawScatter() {
+  const V = EL_STATE.data.variants;
+  const pts = V.filter(v => v.km != null && v.kcat != null);
+  const z = v => { const c = v.thermo || {}; return c["55"] != null ? c["55"] : (c["50"] != null ? c["50"] : 0); };
+  const trace = {
+    type: "scatter3d", mode: "markers",
+    x: pts.map(v => v.km), y: pts.map(v => v.kcat), z: pts.map(z),
+    text: pts.map(v => `#${v.rank} ${v.organisms[0] || v.rep_gene}<br>kcat ${fmtNum(v.kcat)} /s · Km ${fmtNum(v.km)} mM<br>P(Tm>55°)=${(z(v)).toFixed(2)} · ${v.thermo_label || ""}`),
+    hoverinfo: "text",
+    marker: { size: pts.map(v => 5 + Math.min(9, Math.log2((v.cluster_size || 1) + 1) * 2)),
+      color: pts.map(v => v.rank), colorscale: "Viridis", reversescale: true, opacity: .9,
+      line: { width: 0 } },
+  };
+  const dark = { paper_bgcolor: "rgba(0,0,0,0)", font: { color: "#9fb0cc", size: 11 },
+    margin: { l: 0, r: 0, t: 6, b: 0 },
+    scene: { xaxis: { title: "Km (mM)", type: "log", gridcolor: "#22304a", color: "#7d8ca6" },
+      yaxis: { title: "kcat (1/s)", type: "log", gridcolor: "#22304a", color: "#7d8ca6" },
+      zaxis: { title: "P(Tm>55°C)", gridcolor: "#22304a", color: "#7d8ca6" },
+      bgcolor: "rgba(0,0,0,0)" } };
+  try { Plotly.newPlot("el-scatter", pts.length ? [trace] : [], dark, { responsive: true, displayModeBar: false }); }
+  catch (e) { document.getElementById("el-scatter").innerHTML = `<div class="hint" style="padding:20px">3D view unavailable</div>`; }
+}
+
+const COLS = [
+  ["rank", "#", v => v.rank],
+  ["organism", "top organism", v => v.organisms[0] || v.rep_gene],
+  ["kcat", "kcat (1/s)", v => v.kcat],
+  ["km", "Km (mM)", v => v.km],
+  ["kcat_km", "kcat/Km", v => v.kcat_km],
+  ["thermo", "P(Tm>55°)", v => (v.thermo || {})["55"]],
+  ["thermo_label", "Tm range", v => v.thermo_label],
+  ["length", "len", v => v.length],
+  ["cluster_size", "orthologs", v => v.cluster_size],
+];
+function drawTable() {
+  const S = EL_STATE, V = S.data.variants.slice();
+  const col = COLS.find(c => c[0] === S.sortKey) || COLS[0];
+  V.sort((a, b) => { const x = col[2](a), y = col[2](b);
+    if (x == null) return 1; if (y == null) return -1;
+    return (typeof x === "string" ? x.localeCompare(y) : x - y) * S.sortDir; });
+  const head = `<thead><tr>${COLS.map(c =>
+    `<th data-k="${c[0]}" class="${S.sortKey === c[0] ? "on" : ""}">${c[1]}${S.sortKey === c[0] ? (S.sortDir > 0 ? " ▲" : " ▼") : ""}</th>`).join("")}</tr></thead>`;
+  const rows = V.map(v => `<tr data-id="${v.id}" class="${v.id === S.data.variants[S.selected].id ? "sel" : ""}">
+    <td>${v.rank}</td><td class="org"><i>${v.organisms[0] || v.rep_gene}</i>${v.organisms.length > 1 ? ` <span class="hint">+${v.organisms.length - 1}</span>` : ""}</td>
+    <td>${fmtNum(v.kcat)}</td><td>${fmtNum(v.km)}</td><td>${fmtNum(v.kcat_km)}</td>
+    <td>${(v.thermo || {})["55"] != null ? (v.thermo["55"]).toFixed(2) : "—"}</td>
+    <td>${v.thermo_label || "—"}</td><td>${v.length}</td><td>${v.cluster_size}</td></tr>`).join("");
+  const t = document.getElementById("el-table");
+  t.innerHTML = head + `<tbody>${rows}</tbody>`;
+  [...t.querySelectorAll("th")].forEach(th => th.onclick = () => {
+    const k = th.dataset.k; if (S.sortKey === k) S.sortDir *= -1; else { S.sortKey = k; S.sortDir = (k === "km") ? 1 : -1; }
+    drawTable(); });
+  [...t.querySelectorAll("tbody tr")].forEach(tr => tr.onclick = () => {
+    const idx = S.data.variants.findIndex(v => v.id === tr.dataset.id); selectVariant(idx); });
+}
+function selectVariant(idx) {
+  EL_STATE.selected = idx; const v = EL_STATE.data.variants[idx];
+  const seq = (v.sequence || "").replace(/(.{60})/g, "$1\n");
+  const curve = v.thermo || {};
+  const bars = [40, 45, 50, 55, 60, 65].map(t => { const p = curve[t]; return p == null ? "" :
+    `<div class="tb"><div class="tb-bar" style="height:${Math.round(p * 54)}px;background:${p > .5 ? "var(--green)" : "var(--amber)"}"></div><div class="tb-l">${t}</div></div>`; }).join("");
+  document.getElementById("el-seq").innerHTML = `
+    <div class="es-h">#${v.rank} · <i>${v.organisms[0] || v.rep_gene}</i></div>
+    <div class="es-kin"><span>kcat <b>${fmtNum(v.kcat)}</b> /s</span><span>Km <b>${fmtNum(v.km)}</b> mM</span><span>kcat/Km <b>${fmtNum(v.kcat_km)}</b></span></div>
+    <div class="es-therm"><div class="es-lab">thermostability — P(Tm &gt; T)</div><div class="tbars">${bars || '<span class="hint">no thermostability call</span>'}</div><div class="es-tl">${v.thermo_label || ""}</div></div>
+    <div class="es-org"><div class="es-lab">clone from (${v.organisms.length} organism${v.organisms.length > 1 ? "s" : ""} share this variant cluster)</div>
+      <div class="es-orgs">${v.organisms.slice(0, 12).map(o => `<span class="oc"><i>${o}</i></span>`).join("")}${v.organisms.length > 12 ? `<span class="hint">+${v.organisms.length - 12} more</span>` : ""}</div></div>
+    <div class="es-seq"><div class="es-lab">representative sequence · ${v.length} aa · <span class="hint">${v.rep_gene}</span></div><pre>${seq}</pre></div>`;
+  drawTable();
+}
+function fmtNum(x) { if (x == null) return "—"; const a = Math.abs(x);
+  if (a === 0) return "0"; if (a < 0.01 || a >= 10000) return x.toExponential(2);
+  return (+x).toPrecision(3).replace(/\.?0+$/, ""); }
+
 main();
