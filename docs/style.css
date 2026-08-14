@@ -427,3 +427,7 @@ html,body{height:auto;overflow-x:hidden}
 .enzview.het{background:rgba(176,124,255,.13);border-color:rgba(176,124,255,.45);color:var(--violet)}
 .enzview.done{border-color:var(--green);color:var(--green);background:rgba(34,209,140,.1)}
 .el-prog .pl.ok{color:var(--green)}
+
+#enzAll.static{background:rgba(57,192,255,.1);border:1px solid rgba(57,192,255,.35);color:var(--cyan);
+  box-shadow:none;font-size:13px;font-weight:600}
+#enzAll.static:hover{background:rgba(57,192,255,.18);transform:none}

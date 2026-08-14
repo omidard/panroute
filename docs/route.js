@@ -179,9 +179,24 @@ function render(routeId) {
     ${spHtml}
     <p style="color:var(--dim);font-size:11.5px;margin-top:24px">Genome <i>potential</i>, not proof of production. KEGG / MetaNetX-derived · research use.</p>`;
 
-  // one button analyses every enzyme in the pathway; per-step links then view each result
+  // one button analyses every enzyme in the pathway (needs the backend). On the static site there is
+  // no backend, so detect that and turn the button into a "precomputed steps are marked ✓" pointer
+  // instead of letting the user hit a dead "no backend" error.
   const allBtn = document.getElementById("enzAll");
-  if (allBtn) allBtn.onclick = () => runPathwayEnzymes();
+  if (allBtn) {
+    allBtn.onclick = () => runPathwayEnzymes();                 // default (assume live) until ping resolves
+    fetch("api/ping", { cache: "no-store" }).then(r => { if (!r.ok) throw 0; return r.json(); })
+      .then(() => { allBtn.onclick = () => runPathwayEnzymes(); })   // live backend present
+      .catch(() => {
+        allBtn.textContent = "⚗ Open a step marked ✓ below for its enzyme analysis";
+        allBtn.classList.add("static");
+        allBtn.onclick = () => { const v = document.querySelector(".enzview.done");
+          if (v) { v.scrollIntoView({ block: "center" }); v.click(); }
+          else { const p = document.getElementById("enzAllProg"); if (p) p.innerHTML = '<div class="pl">enzyme analyses for this pathway are still being precomputed — check back shortly.</div>'; } };
+        const hint = allBtn.parentElement.querySelector(".hint");
+        if (hint) hint.innerHTML = "Live analysis runs on the compute backend. On this site the steps marked <b>⚗ enzyme candidates ✓</b> below are <b>precomputed</b> — click any one for its 3D kcat / Km / thermostability landscape and ranked variants.";
+      });
+  }
   [...document.querySelectorAll(".enzview")].forEach(b => b.onclick = () =>
     openEnzymeLab(b.dataset.rid, { ko: b.dataset.ko, sub: b.dataset.sub, name: b.dataset.subname }));
   // mark steps whose enzyme bundle is already precomputed — so the STATIC site (no backend) shows
